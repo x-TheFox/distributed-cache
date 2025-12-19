@@ -22,7 +22,10 @@ while [[ $# -gt 0 ]]; do
     --ops|-n) OPS="$2"; shift 2;;
     --threads|-t) THREADS="$2"; shift 2;;
     --iters) ITERS="$2"; shift 2;;
-    --help) echo "Usage: $0 [--ops N] [--threads T] [--iters I]"; exit 0;;
+    --dist|-d) DIST="$2"; shift 2;;
+    --zipf-n) ZIPF_N="$2"; shift 2;;
+    --zipf-s) ZIPF_S="$2"; shift 2;;
+    --help) echo "Usage: $0 [--ops N] [--threads T] [--iters I] [--dist uniform|zipf] [--zipf-n N] [--zipf-s S]"; exit 0;;
     *) echo "Unknown arg $1"; exit 1;;
   esac
 done
