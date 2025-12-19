@@ -1,6 +1,6 @@
 # Distributed In-Memory Cache System
 
-[![CI](https://github.com/x-TheFox/distributed-cache/actions/workflows/ci.yml/badge.svg)](https://github.com/x-TheFox/distributed-cache/actions/workflows/ci.yml) [![codecov](https://codecov.io/gh/x-TheFox/distributed-cache/branch/main/graph/badge.svg)](https://codecov.io/gh/x-TheFox/distributed-cache)
+[![CI](https://github.com/x-TheFox/distributed-cache/actions/workflows/ci.yml/badge.svg)](https://github.com/x-TheFox/distributed-cache/actions/workflows/ci.yml) [![codecov](https://codecov.io/gh/x-TheFox/distributed-cache/branch/main/graph/badge.svg)](https://codecov.io/github/x-TheFox/distributed-cache)
 
 ## Overview
 This project implements a distributed in-memory cache system with multi-protocol support, designed for high concurrency and efficient memory management. The system is built using C++, focusing on performance and low-level control for production-grade caching.
