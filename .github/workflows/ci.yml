@@ -119,6 +119,7 @@ jobs:
           files: coverage.info
           flags: unittests
           name: codecov-${{ runner.os }}
+          token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
 
   format-and-lint:
