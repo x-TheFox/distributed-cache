@@ -46,9 +46,15 @@ public:
     size_t logSize() const;
     std::string getLogEntry(size_t idx) const;
 
+    // WAL support
+    void setWalPath(const std::string& path);
+
 private:
     // In-memory log entries
     std::vector<std::string> log_;
+
+    // WAL (optional)
+    std::unique_ptr<class WAL> wal_;
 
     // RPC callable
     PeerAppendEntriesFn peer_append_entries_fn_;

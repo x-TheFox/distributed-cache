@@ -2,6 +2,7 @@
 #include <thread>
 #include <random>
 #include <iostream>
+#include "replication/wal.h"
 
 namespace replication {
 
@@ -16,6 +17,14 @@ RaftNode::~RaftNode() {
 void RaftNode::start() {
     bool expected = false;
     if (!running_.compare_exchange_strong(expected, true)) return;
+    // Load WAL entries on start if present (useful for followers)
+    if (wal_) {
+        auto entries = wal_->replay();
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (log_.empty()) {
+            for (const auto &e : entries) log_.push_back(e);
+        }
+    }
     // Start election loop
     election_thread_ = std::thread(&RaftNode::electionLoop, this);
 }
@@ -34,11 +43,16 @@ void RaftNode::electionLoop() {
         std::this_thread::sleep_for(std::chrono::milliseconds(timeout));
         if (!running_) break;
 
-        // If there are no peers, become leader immediately
+            // If there are no peers, become leader immediately
         if (peers_.empty()) {
             std::lock_guard<std::mutex> lock(mutex_);
             state_ = State::Leader;
             current_term_++;
+            // Load WAL if present
+            if (wal_) {
+                auto entries = wal_->replay();
+                for (const auto &e : entries) log_.push_back(e);
+            }
             return; // leader elected; election loop can stop for now
         }
 
@@ -85,6 +99,12 @@ void RaftNode::setPeerAppendEntriesFn(PeerAppendEntriesFn fn) {
     peer_append_entries_fn_ = std::move(fn);
 }
 
+void RaftNode::setWalPath(const std::string& path) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    wal_ = std::make_unique<WAL>(path);
+}
+
+
 bool RaftNode::handleAppendEntries(uint64_t term, const std::string& leader_id, const std::vector<std::string>& entries) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (term < current_term_) return false;
@@ -92,8 +112,11 @@ bool RaftNode::handleAppendEntries(uint64_t term, const std::string& leader_id, 
         current_term_ = term;
         state_ = State::Follower;
     }
-    // Append entries to local log
-    for (const auto& e : entries) log_.push_back(e);
+    // Append entries to local log and WAL
+    for (const auto& e : entries) {
+        if (wal_) wal_->append(e);
+        log_.push_back(e);
+    }
     return true;
 }
 
@@ -111,6 +134,8 @@ std::string RaftNode::getLogEntry(size_t idx) const {
 bool RaftNode::appendEntry(const std::string& data) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!running_ || state_ != State::Leader) return false;
+    // Write to WAL first
+    if (wal_) wal_->append(data);
     // Append locally
     log_.push_back(data);
     uint64_t term_snapshot = current_term_;
