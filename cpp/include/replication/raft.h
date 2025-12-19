@@ -4,6 +4,9 @@
 #include <string>
 #include <vector>
 #include <mutex>
+#include <thread>
+#include <atomic>
+#include <chrono>
 
 namespace replication {
 
@@ -22,12 +25,28 @@ public:
     // Query
     bool isLeader() const;
 
+    // Testing hooks
+    void setElectionTimeoutMs(int ms);
+
 private:
+    enum class State {Follower, Candidate, Leader};
+
+    void electionLoop();
+    int randomizedElectionTimeoutMs() const;
+
     mutable std::mutex mutex_;
-    bool running_;
-    bool leader_;
+    std::atomic<bool> running_;
+    State state_;
+    uint64_t current_term_;
     std::string id_;
     std::vector<std::string> peers_;
+
+    // Election timing
+    int election_timeout_min_ms_;
+    int election_timeout_max_ms_;
+
+    // Worker
+    std::thread election_thread_;
 };
 
 } // namespace replication
