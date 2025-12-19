@@ -54,7 +54,7 @@ void RaftNode::electionLoop() {
         int votes = 1; // self vote
         uint64_t term_snapshot = current_term_;
 
-        // Request votes from peers via configured callable
+            // Request votes from peers via configured callable
         if (peer_request_vote_fn_) {
             for (const auto& p : peers_) {
                 bool granted = false;
@@ -76,9 +76,63 @@ void RaftNode::electionLoop() {
             return;
         }
 
-        // else, election failed; try again after next timeout
+        // If not elected, try again next timeout
     }
 }
+
+void RaftNode::setPeerAppendEntriesFn(PeerAppendEntriesFn fn) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    peer_append_entries_fn_ = std::move(fn);
+}
+
+bool RaftNode::handleAppendEntries(uint64_t term, const std::string& leader_id, const std::vector<std::string>& entries) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (term < current_term_) return false;
+    if (term > current_term_) {
+        current_term_ = term;
+        state_ = State::Follower;
+    }
+    // Append entries to local log
+    for (const auto& e : entries) log_.push_back(e);
+    return true;
+}
+
+size_t RaftNode::logSize() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return log_.size();
+}
+
+std::string RaftNode::getLogEntry(size_t idx) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (idx >= log_.size()) return "";
+    return log_[idx];
+}
+
+bool RaftNode::appendEntry(const std::string& data) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!running_ || state_ != State::Leader) return false;
+    // Append locally
+    log_.push_back(data);
+    uint64_t term_snapshot = current_term_;
+
+    // Replicate synchronously using peer_append_entries_fn_
+    int successes = 1;
+    if (peer_append_entries_fn_) {
+        for (const auto& p : peers_) {
+            bool ok = false;
+            try {
+                ok = peer_append_entries_fn_(p, term_snapshot, id_, std::vector<std::string>{data});
+            } catch (...) {
+                ok = false;
+            }
+            if (ok) successes++;
+        }
+    }
+
+    size_t total_nodes = peers_.size() + 1;
+    return successes > static_cast<int>(total_nodes / 2);
+}
+
 
 int RaftNode::randomizedElectionTimeoutMs() const {
     std::random_device rd;
@@ -107,14 +161,6 @@ bool RaftNode::handleRequestVote(uint64_t term, const std::string& candidate_id)
         return true;
     }
     return false;
-}
-
-bool RaftNode::appendEntry(const std::string& data) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (!running_ || state_ != State::Leader) return false;
-    // TODO: persist entry to WAL and replicate to followers
-    (void)data;
-    return true;
 }
 
 bool RaftNode::isLeader() const {

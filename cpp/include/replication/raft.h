@@ -7,6 +7,8 @@
 #include <thread>
 #include <atomic>
 #include <chrono>
+#include <functional>
+#include <unordered_map>
 
 namespace replication {
 
@@ -19,14 +21,37 @@ public:
     void start();
     void stop();
 
-    // Append an entry to the log (returns true if accepted by leader)
-    bool appendEntry(const std::string& data);
-
     // Query
     bool isLeader() const;
 
     // Testing hooks
     void setElectionTimeoutMs(int ms);
+
+    // RPC glue for tests: set a callable to invoke RequestVote on a peer
+    using PeerRequestVoteFn = std::function<bool(const std::string& peer_id, uint64_t term, const std::string& candidate_id)>;
+    void setPeerRequestVoteFn(PeerRequestVoteFn fn);
+
+    // Direct RPC handler used by tests (simulates receiving RequestVote)
+    bool handleRequestVote(uint64_t term, const std::string& candidate_id);
+
+    // AppendEntries RPC
+    using PeerAppendEntriesFn = std::function<bool(const std::string& peer_id, uint64_t term, const std::string& leader_id, const std::vector<std::string>& entries)>;
+    void setPeerAppendEntriesFn(PeerAppendEntriesFn fn);
+    bool handleAppendEntries(uint64_t term, const std::string& leader_id, const std::vector<std::string>& entries);
+
+    // Append locally (used by leader)
+    bool appendEntry(const std::string& data);
+
+    // For tests: inspect log
+    size_t logSize() const;
+    std::string getLogEntry(size_t idx) const;
+
+private:
+    // In-memory log entries
+    std::vector<std::string> log_;
+
+    // RPC callable
+    PeerAppendEntriesFn peer_append_entries_fn_;
 
 private:
     enum class State {Follower, Candidate, Leader};
@@ -47,6 +72,13 @@ private:
 
     // Worker
     std::thread election_thread_;
+
+    // Voting state
+    std::string voted_for_;
+    uint64_t voted_term_;
+
+    // RPC callable
+    PeerRequestVoteFn peer_request_vote_fn_;
 };
 
 } // namespace replication

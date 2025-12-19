@@ -36,6 +36,16 @@ TEST(Raft, TwoNodeDeterministicElection) {
         return false;
     });
 
+    // Hook up append entries RPC so leader's append is applied on the follower
+    a.setPeerAppendEntriesFn([&](const std::string& peer_id, uint64_t term, const std::string& leader_id, const std::vector<std::string>& entries){
+        if (peer_id == "b") return b.handleAppendEntries(term, leader_id, entries);
+        return false;
+    });
+    b.setPeerAppendEntriesFn([&](const std::string& peer_id, uint64_t term, const std::string& leader_id, const std::vector<std::string>& entries){
+        if (peer_id == "a") return a.handleAppendEntries(term, leader_id, entries);
+        return false;
+    });
+
     // Make A have a shorter timeout so it should win deterministically
     a.setElectionTimeoutMs(30);
     b.setElectionTimeoutMs(150);
@@ -51,7 +61,17 @@ TEST(Raft, TwoNodeDeterministicElection) {
         std::this_thread::sleep_for(std::chrono::milliseconds(25));
     }
 
-    EXPECT_TRUE(a_leader);
+    ASSERT_TRUE(a_leader);
+
+    // Leader appends an entry and replication should succeed
+    bool ok = a.appendEntry("value1");
+    EXPECT_TRUE(ok);
+
+    // Wait briefly for replication
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    EXPECT_EQ(b.logSize(), 1u);
+    EXPECT_EQ(b.getLogEntry(0), "value1");
 
     a.stop();
     b.stop();
