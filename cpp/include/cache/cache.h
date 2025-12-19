@@ -1,29 +1,43 @@
 #ifndef CACHE_H
 #define CACHE_H
 
-#include <unordered_map>
-#include <mutex>
-#include <memory>
 #include <string>
+#include <optional>
+#include <mutex>
+#include <chrono>
+#include "lru.h"
 
-template <typename Key, typename Value>
+struct CacheEntry {
+    std::string value;
+    std::chrono::steady_clock::time_point expiry;
+
+    CacheEntry() = default;
+    CacheEntry(const std::string& v, const std::chrono::steady_clock::time_point& e) : value(v), expiry(e) {}
+    bool expired() const {
+        if (expiry == std::chrono::steady_clock::time_point()) return false;
+        return std::chrono::steady_clock::now() > expiry;
+    }
+};
+
 class Cache {
 public:
     Cache(size_t maxSize);
     ~Cache();
 
-    void put(const Key& key, const Value& value);
-    std::shared_ptr<Value> get(const Key& key);
-    void remove(const Key& key);
-    void clear();
+    // ttl_ms = 0 means no expiry
+    void put(const std::string& key, const std::string& value, uint64_t ttl_ms = 0);
+    std::optional<std::string> get(const std::string& key);
+    bool remove(const std::string& key);
+    size_t size();
+
+    uint64_t hits() const;
+    uint64_t misses() const;
 
 private:
-    size_t maxSize;
-    std::unordered_map<Key, std::shared_ptr<Value>> cacheMap;
-    std::mutex cacheMutex;
+    LRUCache<std::string, CacheEntry> lru_;
+    mutable std::mutex mutex_;
+    uint64_t hits_{0};
+    uint64_t misses_{0};
 };
-
-#include "lru.h"
-#include "allocator.h"
 
 #endif // CACHE_H
