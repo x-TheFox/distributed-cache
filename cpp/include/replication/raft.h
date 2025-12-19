@@ -52,6 +52,9 @@ public:
     // Async replication control
     void setReplicationIntervalMs(int ms);
 
+    // Helper for tests
+    size_t getCommitIndexForTest() const { std::lock_guard<std::mutex> lock(mutex_); return commit_index_; }
+
 private:
     // In-memory log entries
     std::vector<std::string> log_;

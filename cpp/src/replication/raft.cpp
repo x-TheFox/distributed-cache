@@ -69,7 +69,12 @@ void RaftNode::electionLoop() {
         if (votes > static_cast<int>(total_nodes / 2)) {
             std::lock_guard<std::mutex> lock(mutex_);
             state_ = State::Leader;
-            // stop election loop for now; in a real implementation we'd continue sending heartbeats
+            // Initialize leader's replication bookkeeping
+            for (const auto &p : peers_) {
+                next_index_[p] = log_.size();
+                match_index_[p] = 0;
+            }
+            // stop election loop for now; replication will continue in replication thread
             return;
         }
 
@@ -123,19 +128,64 @@ void RaftNode::start() {
                         for (size_t i = start; i < log_.size(); ++i) to_replicate.push_back(log_[i]);
                     }
                 }
-                if (!to_replicate.empty() && peer_append_entries_fn_) {
-                    int successes = 1; // leader
+                if (peer_append_entries_fn_) {
+                    int successes = 1; // leader counts as replicated
                     for (const auto &p : peers_) {
+                        size_t start_index = 0;
+                        {
+                            std::lock_guard<std::mutex> lg(mutex_);
+                            start_index = next_index_[p];
+                        }
+
+                        if (start_index >= log_.size()) {
+                            // nothing to send
+                            if (match_index_.count(p)) {
+                                // already up-to-date
+                                successes += (match_index_[p] >= log_.size()) ? 1 : 0;
+                            }
+                            continue;
+                        }
+
+                        std::vector<std::string> entries;
+                        {
+                            std::lock_guard<std::mutex> lg(mutex_);
+                            for (size_t i = start_index; i < log_.size(); ++i) entries.push_back(log_[i]);
+                        }
+
                         bool ok = false;
                         try {
-                            ok = peer_append_entries_fn_(p, current_term_, id_, to_replicate);
+                            ok = peer_append_entries_fn_(p, current_term_, id_, entries);
                         } catch (...) { ok = false; }
-                        if (ok) successes++;
+
+                        if (ok) {
+                            // update match and next indices
+                            std::lock_guard<std::mutex> lg(mutex_);
+                            match_index_[p] = start_index + entries.size();
+                            next_index_[p] = match_index_[p];
+                            successes++;
+                        } else {
+                            // back off next_index
+                            std::lock_guard<std::mutex> lg(mutex_);
+                            if (next_index_[p] > 0) next_index_[p]--;
+                        }
                     }
+
                     size_t total = peers_.size() + 1;
                     if (successes > static_cast<int>(total/2)) {
+                        // compute new commit index (majority of match indexes + leader)
+                        std::vector<size_t> all;
+                        {
+                            std::lock_guard<std::mutex> lg(mutex_);
+                            all.reserve(match_index_.size() + 1);
+                            for (auto &kv : match_index_) all.push_back(kv.second);
+                            // leader's index is log_.size()
+                            all.push_back(log_.size());
+                        }
+                        std::sort(all.begin(), all.end(), std::greater<size_t>());
+                        size_t majority_pos = (total - 1) / 2; // 0-based
+                        size_t new_commit = all[majority_pos];
                         std::lock_guard<std::mutex> lg(mutex_);
-                        commit_index_ = log_.size();
+                        if (new_commit > commit_index_) commit_index_ = new_commit;
                     }
                 }
             }

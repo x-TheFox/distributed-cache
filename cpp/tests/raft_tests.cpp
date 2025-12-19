@@ -74,6 +74,9 @@ TEST(Raft, TwoNodeDeterministicElection) {
     EXPECT_EQ(b.logSize(), 1u);
     EXPECT_EQ(b.getLogEntry(0), "value1");
 
+    // Ensure leader's commit index advanced
+    EXPECT_GT(a.getCommitIndexForTest(), 0u);
+
     a.stop();
     b.stop();
 }
