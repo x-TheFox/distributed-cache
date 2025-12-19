@@ -1,3 +1,6 @@
+#ifndef UDP_SERVER_H
+#define UDP_SERVER_H
+
 #include <iostream>
 #include <cstring>
 #include <thread>
@@ -51,13 +54,4 @@ private:
     struct sockaddr_in server_addr;
 };
 
-int main() {
-    try {
-        UDPServer server(8080);
-        server.start();
-    } catch (const std::exception &e) {
-        std::cerr << "Error: " << e.what() << std::endl;
-        return EXIT_FAILURE;
-    }
-    return EXIT_SUCCESS;
-}
+#endif // UDP_SERVER_H

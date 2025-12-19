@@ -1,0 +1,60 @@
+# macOS
+.DS_Store
+
+# Build directories
+/cpp/build/
+/build/
+
+# CMake files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+
+# Binaries
+/dist/*
+*/dist/*
+*.exe
+*.out
+*.o
+*.obj
+*.so
+*.a
+*.dylib
+
+# Logs
+*.log
+
+# Google Test artifacts
+*.profdata
+
+# Editor directories and files
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Temporary files
+*~
+*.swp
+
+# Python
+venv/
+__pycache__/
+
+# Docker
+docker-compose.override.yml
+
+# Archives
+*.zip
+*.tar.gz
+*.tgz
+
+# Coverage
+coverage/
+
+# Other
+.env
+
+# Ignore generated files and folders under repo root
+cpp/build/
