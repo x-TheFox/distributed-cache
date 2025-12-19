@@ -9,6 +9,7 @@
 #include <chrono>
 #include <functional>
 #include <unordered_map>
+#include "replication/snapshot.h"
 
 namespace replication {
 
@@ -43,6 +44,13 @@ public:
     void setPeerAppendEntriesFn(PeerAppendEntriesFn fn);
     AppendEntriesResult handleAppendEntries(uint64_t term, const std::string& leader_id, size_t prev_log_index, uint64_t prev_log_term, const std::vector<Entry>& entries);
 
+    // InstallSnapshot RPC: leader sends a snapshot to a follower when the follower is too far behind
+    struct InstallSnapshotResult { uint64_t term; bool success; };
+    using PeerInstallSnapshotFn = std::function<InstallSnapshotResult(const std::string& peer_id, uint64_t term, const struct Snapshot& snapshot)>;
+    void setPeerInstallSnapshotFn(PeerInstallSnapshotFn fn);
+    InstallSnapshotResult handleInstallSnapshot(uint64_t term, const struct Snapshot& snapshot);
+
+
     // Test helpers
     uint64_t getCurrentTermForTest() const { std::lock_guard<std::mutex> lock(mutex_); return current_term_; }
     void updateLastAppendTimeForTest() { std::lock_guard<std::mutex> lock(mutex_); last_append_time_ = std::chrono::steady_clock::now(); }
@@ -57,6 +65,13 @@ public:
     // WAL support
     void setWalPath(const std::string& path);
 
+    // Snapshot support
+    void setSnapshotPath(const std::string& path);
+
+    // Snapshot creation helpers
+    void setSnapshotThreshold(size_t entries);
+    bool createSnapshot(const std::string& data);
+
     // Log compaction (testing & maintenance helper): drop `count` entries from log head and compact WAL
     // Note: this is a simple compaction helper for tests; full snapshotting/sync will be more comprehensive.
     bool compactLogPrefix(size_t count);
@@ -66,6 +81,15 @@ public:
 
     // Helper for tests
     size_t getCommitIndexForTest() const { std::lock_guard<std::mutex> lock(mutex_); return commit_index_; }
+
+public:
+    // Tests and external uses may need to control replication timing
+    void setReplicationIntervalMsPublic(int ms) { setReplicationIntervalMs(ms); }
+    size_t getCommitIndexForTestPublic() const { return getCommitIndexForTest(); }
+
+private:
+    // Internal helper that assumes mutex_ is already held. Removes `count` entries from in-memory log and updates metadata.
+    void compactLogPrefixLocked(size_t count);
 
 private:
     // In-memory log entries (term + data)
@@ -123,6 +147,13 @@ private:
 
     // RPC callable
     PeerRequestVoteFn peer_request_vote_fn_;
+    PeerInstallSnapshotFn peer_install_snapshot_fn_;
+
+    // Snapshot storage path
+    std::string snapshot_path_;
+
+    // Snapshot creation threshold (number of entries before auto-snapshot)
+    size_t snapshot_threshold_entries_ = 0;
 };
 
 } // namespace replication

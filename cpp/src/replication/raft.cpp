@@ -3,6 +3,7 @@
 #include <thread>
 #include <random>
 #include <iostream>
+#include <future>
 #include "replication/wal.h"
 
 namespace replication {
@@ -109,11 +110,14 @@ void RaftNode::setReplicationIntervalMs(int ms) {
 }
 
 void RaftNode::start() {
+    LOG(LogLevel::DEBUG, "[raft] start node=" << id_);
     bool expected = false;
-    if (!running_.compare_exchange_strong(expected, true)) return;
+    if (!running_.compare_exchange_strong(expected, true)) { LOG(LogLevel::WARN, "[raft] start called while already running"); return; }
     // Load WAL entries on start if present (useful for followers)
     if (wal_) {
+        LOG(LogLevel::DEBUG, "[wal] replay start on start path set");
         auto entries = wal_->replay();
+        LOG(LogLevel::DEBUG, "[wal] replay returned entries=" << entries.size());
         std::lock_guard<std::mutex> lock(mutex_);
         if (log_.empty()) {
             for (const auto &p : entries) log_.push_back(Entry{p.first, p.second});
@@ -124,12 +128,22 @@ void RaftNode::start() {
         std::lock_guard<std::mutex> lock(mutex_);
         last_append_time_ = std::chrono::steady_clock::now();
     }
+    // If no peers, become leader immediately
+    if (peers_.empty()) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        state_ = State::Leader;
+        current_term_++;
+        LOG(LogLevel::INFO, "[raft] node=" << id_ << " becoming leader (no peers) term=" << current_term_);
+        // initialize replication bookkeeping (empty peers)
+    }
+
     // Start election loop
     election_thread_ = std::thread(&RaftNode::electionLoop, this);
 
     // Start replication thread
     replication_running_.store(true);
     replication_thread_ = std::thread([this]{
+        LOG(LogLevel::DEBUG, "[raft] replication thread started for node=" << id_);
         while (replication_running_.load()) {
             std::unique_lock<std::mutex> lock(replication_mutex_);
             replication_cv_.wait_for(lock, std::chrono::milliseconds(replication_interval_ms_));
@@ -145,6 +159,41 @@ void RaftNode::start() {
                             start_index = next_index_[p];
                         }
 
+                        // If follower is so far behind (next_index <= last_included_index_), send InstallSnapshot
+                        if (peer_install_snapshot_fn_) {
+                            bool need_snapshot = false;
+                            Snapshot snap;
+                            {
+                                std::lock_guard<std::mutex> lg(mutex_);
+                                if (start_index <= last_included_index_) {
+                                    need_snapshot = true;
+                                    snap.last_included_index = last_included_index_;
+                                    snap.last_included_term = last_included_term_;
+                                    if (!snapshot_path_.empty()) Snapshot::load(snapshot_path_ + ".snap", snap);
+                                }
+                            }
+                            if (need_snapshot) {
+                                RaftNode::InstallSnapshotResult sres{0, false};
+                                try {
+                                    sres = peer_install_snapshot_fn_(p, current_term_, snap);
+                                } catch (...) { sres.success = false; sres.term = 0; }
+                                if (sres.term > current_term_) {
+                                    std::lock_guard<std::mutex> lg(mutex_);
+                                    std::cerr << "[raft] leader=" << id_ << " observed higher term " << sres.term << " from " << p << ", stepping down\n";
+                                    current_term_ = sres.term;
+                                    state_ = State::Follower;
+                                    break;
+                                }
+                                if (sres.success) {
+                                    std::lock_guard<std::mutex> lg(mutex_);
+                                    // follower accepted snapshot; advance indices
+                                    next_index_[p] = last_included_index_ + 1;
+                                    match_index_[p] = last_included_index_;
+                                }
+                                continue; // done with this peer for this round
+                            }
+                        }
+
                         std::vector<Entry> entries;
                         size_t prev_index = (start_index == 0) ? static_cast<size_t>(-1) : start_index - 1;
                         uint64_t prev_term = 0;
@@ -156,7 +205,7 @@ void RaftNode::start() {
                             if (prev_index != static_cast<size_t>(-1) && prev_index < log_.size()) prev_term = log_[prev_index].term;
                         }
 
-                        RaftNode::AppendEntriesResult res{false, 0, 0};
+                        RaftNode::AppendEntriesResult res{false, 0, 0, 0, 0};
                         try {
                             res = peer_append_entries_fn_(p, current_term_, id_, prev_index, prev_term, entries);
                         } catch (...) { res.success = false; res.term = 0; res.match_index = 0; }
@@ -329,21 +378,49 @@ size_t RaftNode::logSize() const {
     return log_.size();
 }
 
-bool RaftNode::compactLogPrefix(size_t count) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (!wal_) return false;
-    if (count == 0) return true;
-    if (count > log_.size()) return false;
-    // capture term of last dropped entry
+void RaftNode::compactLogPrefixLocked(size_t count) {
+    // Assumes mutex_ is held
+    if (count == 0) return;
+    if (count > log_.size()) {
+        // If count > log size, just clear
+        last_included_index_ += count;
+        // keep last_included_term_ unchanged if no entries
+        return;
+    }
     uint64_t last_term = log_[count - 1].term;
-    // remove from in-memory log
     log_.erase(log_.begin(), log_.begin() + static_cast<ssize_t>(count));
-    // persist compaction to WAL
-    bool ok = wal_->truncateHead(count);
-    if (!ok) return false;
-    // record compacted metadata
     last_included_index_ += count;
     last_included_term_ = last_term;
+}
+
+bool RaftNode::compactLogPrefix(size_t count) {
+    if (!wal_) return false;
+    if (count == 0) return true;
+
+    // Validate and capture metadata under lock, then call WAL truncate outside the lock
+    uint64_t last_term = 0;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (count > log_.size()) return false;
+        last_term = log_[count - 1].term;
+    }
+
+    LOG(LogLevel::DEBUG, "[raft] compactLogPrefix start node=" << id_ << " drop=" << count);
+    bool ok = wal_->truncateHead(count);
+    if (!ok) { LOG(LogLevel::ERROR, "[raft] compactLogPrefix wal truncate failed"); return false; }
+
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        // double-check and perform in-memory removal
+        if (count > log_.size()) {
+            last_included_index_ += count;
+            last_included_term_ = last_term;
+            return true;
+        }
+        compactLogPrefixLocked(count);
+    }
+
+    LOG(LogLevel::DEBUG, "[raft] compactLogPrefix done node=" << id_ << " new_last_included_index=" << last_included_index_);
     return true;
 }
 
@@ -355,12 +432,14 @@ std::string RaftNode::getLogEntry(size_t idx) const {
 
 bool RaftNode::appendEntry(const std::string& data) {
     // Leader appends entry and waits for commit (simplified blocking semantics)
+    LOG(LogLevel::DEBUG, "[raft] appendEntry called node=" << id_ << " isLeader=" << isLeader());
     if (!running_ || !isLeader()) return false;
 
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (wal_) wal_->append(current_term_, data);
         log_.push_back(Entry{current_term_, data});
+        LOG(LogLevel::DEBUG, "[raft] node=" << id_ << " appended entry term=" << current_term_ << " logSize=" << log_.size());
         // If single-node cluster, commit immediately
         if (peers_.empty()) {
             commit_index_ = log_.size();
@@ -382,6 +461,7 @@ bool RaftNode::appendEntry(const std::string& data) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
         waited += 10;
     }
+    LOG(LogLevel::WARN, "[raft] appendEntry timeout node=" << id_);
     return false;
 }
 
@@ -396,6 +476,146 @@ int RaftNode::randomizedElectionTimeoutMs() const {
 void RaftNode::setPeerRequestVoteFn(PeerRequestVoteFn fn) {
     std::lock_guard<std::mutex> lock(mutex_);
     peer_request_vote_fn_ = std::move(fn);
+}
+
+void RaftNode::setSnapshotPath(const std::string& path) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    snapshot_path_ = path;
+}
+
+void RaftNode::setSnapshotThreshold(size_t entries) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    snapshot_threshold_entries_ = entries;
+}
+
+bool RaftNode::createSnapshot(const std::string& data) {
+    LOG(LogLevel::DEBUG, "[raft] createSnapshot node=" << id_ << " data_len=" << data.size());
+    // Gather snapshot metadata under lock, then release before IO and compaction to avoid deadlocks
+    Snapshot s;
+    size_t to_drop = 0;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!isLeader()) { LOG(LogLevel::WARN, "[raft] createSnapshot node=" << id_ << " not leader"); return false; }
+        if (snapshot_path_.empty()) { LOG(LogLevel::WARN, "[raft] createSnapshot no snapshot_path set"); return false; }
+        s.last_included_index = last_included_index_ + log_.size();
+        s.last_included_term = log_.empty() ? last_included_term_ : log_.back().term;
+        to_drop = log_.size();
+    }
+
+    s.data = data;
+    std::string path = snapshot_path_ + ".snap";
+    std::cerr << "[snapshot-debug] before async save" << std::endl;
+    LOG(LogLevel::DEBUG, "[snapshot] save path=" << path << " index=" << s.last_included_index << " term=" << s.last_included_term << " len=" << s.data.size());
+    // Run save in async with a short timeout to avoid blocking the test indefinitely
+    auto fut = std::async(std::launch::async, [&s, &path]{ std::cerr << "[snapshot-debug] in async save start" << std::endl; bool r = s.save(path); std::cerr << "[snapshot-debug] in async save done r=" << r << std::endl; return r; });
+    std::cerr << "[snapshot-debug] after launching async" << std::endl;
+    if (fut.wait_for(std::chrono::milliseconds(500)) != std::future_status::ready) {
+        std::cerr << "[snapshot-debug] async save timed out" << std::endl;
+        LOG(LogLevel::ERROR, "[raft] createSnapshot save timed out");
+        return false;
+    }
+    std::cerr << "[snapshot-debug] async ready" << std::endl;
+    if (!fut.get()) { std::cerr << "[snapshot-debug] async returned false" << std::endl; LOG(LogLevel::ERROR, "[raft] createSnapshot save failed"); return false; }
+    std::cerr << "[snapshot-debug] save succeeded" << std::endl;
+
+    // compact entire log (may call WAL and acquire raft mutex internally as needed)
+    if (to_drop > 0) {
+        LOG(LogLevel::DEBUG, "[raft] createSnapshot compacting drop=" << to_drop);
+        if (!compactLogPrefix(to_drop)) { LOG(LogLevel::ERROR, "[raft] createSnapshot compactLogPrefix failed"); return false; }
+        LOG(LogLevel::DEBUG, "[raft] createSnapshot compacted");
+    }
+    return true;
+}
+
+void RaftNode::setPeerInstallSnapshotFn(PeerInstallSnapshotFn fn) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    peer_install_snapshot_fn_ = std::move(fn);
+}
+
+RaftNode::InstallSnapshotResult RaftNode::handleInstallSnapshot(uint64_t term, const Snapshot& snapshot) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    InstallSnapshotResult res{current_term_, false};
+    LOG(LogLevel::DEBUG, "[raft] node=" << id_ << " recv InstallSnapshot term=" << term << " snap_index=" << snapshot.last_included_index << " snap_term=" << snapshot.last_included_term);
+    if (term < current_term_) {
+        res.term = current_term_;
+        res.success = false;
+        return res;
+    }
+    if (term > current_term_) {
+        current_term_ = term;
+        state_ = State::Follower;
+    }
+
+    // persist snapshot to disk if path configured
+    if (!snapshot_path_.empty()) {
+        Snapshot s = snapshot;
+        std::string path = snapshot_path_ + ".snap";
+        if (!s.save(path)) {
+            LOG(LogLevel::ERROR, "[raft] node=" << id_ << " failed to save snapshot to " << path);
+            res.success = false;
+            res.term = current_term_;
+            return res;
+        }
+    }
+
+    // Figure out how many local log entries to drop
+    size_t prev_last_included = last_included_index_;
+    uint64_t prev_term = last_included_term_;
+    if (snapshot.last_included_index > last_included_index_) {
+        size_t drop = snapshot.last_included_index - last_included_index_;
+        if (drop <= log_.size()) {
+            // To avoid locking re-entrancy issues, perform WAL truncate outside mutex, then update in-memory under lock
+            // Capture necessary metadata
+            uint64_t last_term = 0;
+            {
+                // mutex_ already held here
+                last_term = log_[drop - 1].term;
+            }
+            // perform wal truncate outside lock
+            if (wal_) {
+                if (!wal_->truncateHead(drop)) {
+                    LOG(LogLevel::ERROR, "[raft] node=" << id_ << " wal truncate failed during install snapshot");
+                    res.success = false;
+                    res.term = current_term_;
+                    return res;
+                }
+            }
+            // update in-memory log under lock
+            {
+                std::lock_guard<std::mutex> lg(mutex_);
+                compactLogPrefixLocked(drop);
+            }
+        } else {
+            // follower doesn't have enough local entries: clear all
+            size_t local = log_.size();
+            // perform wal truncate outside lock
+            if (wal_) {
+                if (!wal_->truncateHead(local)) {
+                    LOG(LogLevel::ERROR, "[raft] node=" << id_ << " wal truncate failed during install snapshot (clear all)");
+                    res.success = false;
+                    res.term = current_term_;
+                    return res;
+                }
+            }
+            {
+                std::lock_guard<std::mutex> lg(mutex_);
+                log_.clear();
+                last_included_index_ = snapshot.last_included_index;
+                last_included_term_ = snapshot.last_included_term;
+            }
+        }
+    }
+
+    // update snapshot metadata
+    last_included_index_ = snapshot.last_included_index;
+    last_included_term_ = snapshot.last_included_term;
+
+    // reset commit index if necessary
+    if (commit_index_ < last_included_index_) commit_index_ = last_included_index_;
+
+    res.term = current_term_;
+    res.success = true;
+    return res;
 }
 
 bool RaftNode::handleRequestVote(uint64_t term, const std::string& candidate_id) {
