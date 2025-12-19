@@ -5,23 +5,13 @@
 #include <optional>
 #include <mutex>
 #include <chrono>
-#include "cache/lru.h"
-
-struct CacheEntry {
-    std::string value;
-    std::chrono::steady_clock::time_point expiry;
-
-    CacheEntry() = default;
-    CacheEntry(const std::string& v, const std::chrono::steady_clock::time_point& e) : value(v), expiry(e) {}
-    bool expired() const {
-        if (expiry == std::chrono::steady_clock::time_point()) return false;
-        return std::chrono::steady_clock::now() > expiry;
-    }
-};
+#include "eviction.h"
+#include "lru.h"
+#include "lfu.h"
 
 class Cache {
 public:
-    Cache(size_t maxSize);
+    Cache(size_t maxSize, EvictionPolicyType policy = EvictionPolicyType::LRU);
     ~Cache();
 
     // ttl_ms = 0 means no expiry
@@ -34,7 +24,7 @@ public:
     uint64_t misses() const;
 
 private:
-    LRUCache<std::string, CacheEntry> lru_;
+    std::unique_ptr<EvictionPolicyInterface> evictor_;
     mutable std::mutex mutex_;
     uint64_t hits_{0};
     uint64_t misses_{0};

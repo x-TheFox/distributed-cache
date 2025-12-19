@@ -64,3 +64,44 @@ TEST_F(CacheTest, TTLExpiration) {
     auto v2 = cache->get("temp");
     EXPECT_FALSE(v2.has_value());
 }
+
+TEST(CacheLFU, EvictionBehavior) {
+    Cache cache(3, EvictionPolicyType::LFU);
+    cache.put("a", "1");
+    cache.put("b", "2");
+    cache.put("c", "3");
+
+    // Access patterns: a:2, b:1, c:1
+    auto va = cache.get("a");
+    ASSERT_TRUE(va.has_value());
+    auto vb = cache.get("b");
+    ASSERT_TRUE(vb.has_value());
+    auto va2 = cache.get("a");
+    ASSERT_TRUE(va2.has_value());
+
+    // Insert d, should evict one of the least frequently used (b or c)
+    cache.put("d", "4");
+    auto vb2 = cache.get("b");
+    auto vc = cache.get("c");
+    auto vd = cache.get("d");
+    ASSERT_TRUE(vd.has_value());
+    // Exactly one of b or c must be evicted
+    EXPECT_TRUE(!(vb2.has_value() && vc.has_value()));
+}
+
+TEST(CachePolicy, LRUvsLFU) {
+    Cache lruCache(2, EvictionPolicyType::LRU);
+    lruCache.put("x", "1");
+    lruCache.put("y", "2");
+    lruCache.get("x"); // x becomes most recent
+    lruCache.put("z", "3");
+    EXPECT_FALSE(lruCache.get("y").has_value()); // y should be evicted (LRU)
+
+    Cache lfuCache(2, EvictionPolicyType::LFU);
+    lfuCache.put("x", "1");
+    lfuCache.put("y", "2");
+    lfuCache.get("x"); // x freq 1
+    lfuCache.put("z", "3");
+    // y (freq 1, but least recently used among freq 1) may be evicted; x should survive due to more freq
+    EXPECT_TRUE(lfuCache.get("x").has_value());
+}

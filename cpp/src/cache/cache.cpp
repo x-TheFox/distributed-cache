@@ -1,7 +1,17 @@
 #include "cache/cache.h"
 #include <chrono>
 
-Cache::Cache(size_t maxSize) : lru_(maxSize) {}
+Cache::Cache(size_t maxSize, EvictionPolicyType policy) {
+    switch (policy) {
+        case EvictionPolicyType::LRU:
+            // Use existing LRU implementation
+            evictor_ = std::make_unique<LRUCache>(maxSize);
+            break;
+        case EvictionPolicyType::LFU:
+            evictor_ = std::make_unique<LFUEvictor>(maxSize);
+            break;
+    }
+}
 
 Cache::~Cache() = default;
 
@@ -12,19 +22,19 @@ void Cache::put(const std::string& key, const std::string& value, uint64_t ttl_m
     }
     CacheEntry entry(value, expiry);
     std::lock_guard<std::mutex> lock(mutex_);
-    lru_.put(key, entry);
+    evictor_->put(key, entry);
 }
 
 std::optional<std::string> Cache::get(const std::string& key) {
     std::lock_guard<std::mutex> lock(mutex_);
     CacheEntry entry;
-    if (!lru_.get(key, entry)) {
+    if (!evictor_->get(key, entry)) {
         ++misses_;
         return std::nullopt;
     }
     if (entry.expired()) {
         // Remove expired entry
-        lru_.remove(key);
+        evictor_->remove(key);
         ++misses_;
         return std::nullopt;
     }
@@ -34,11 +44,12 @@ std::optional<std::string> Cache::get(const std::string& key) {
 
 bool Cache::remove(const std::string& key) {
     std::lock_guard<std::mutex> lock(mutex_);
-    return lru_.remove(key);
+    return evictor_->remove(key);
 }
 
 size_t Cache::size() {
-    return lru_.size();
+    std::lock_guard<std::mutex> lock(mutex_);
+    return evictor_->size();
 }
 
 uint64_t Cache::hits() const { return hits_; }

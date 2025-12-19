@@ -35,3 +35,7 @@ enable_testing()
 add_executable(cache_tests tests/cache_tests.cpp)
 target_link_libraries(cache_tests gtest_main distributed_cache_lib)
 add_test(NAME cache_tests COMMAND cache_tests)
+
+# Benchmarks
+add_executable(perf_bench benchmarks/perf_bench.cpp)
+target_link_libraries(perf_bench distributed_cache_lib)
