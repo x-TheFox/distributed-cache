@@ -92,6 +92,22 @@ bool MockReplicator::get_local(const std::string& key, std::string& value) const
     return true;
 }
 
+std::vector<std::string> MockReplicator::list_keys() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<std::string> keys;
+    keys.reserve(store_.size());
+    for (const auto &kv : store_) keys.push_back(kv.first);
+    return keys;
+}
+
+bool MockReplicator::remove_local(const std::string& key) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = store_.find(key);
+    if (it == store_.end()) return false;
+    store_.erase(it);
+    return true;
+}
+
 void MockReplicator::add_peer(const std::shared_ptr<MockReplicator>& peer) {
     peers_.push_back(peer);
 }

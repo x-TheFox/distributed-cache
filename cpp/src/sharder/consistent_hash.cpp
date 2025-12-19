@@ -1,20 +1,39 @@
 #include "sharder/consistent_hash.h"
-#include <openssl/sha.h>
+#include <functional>
 #include <sstream>
 
 ConsistentHash::ConsistentHash(size_t virtual_nodes) : virtual_nodes_(virtual_nodes) {}
 
-static uint64_t sha1_hash64(const std::string &s) {
-    unsigned char digest[SHA_DIGEST_LENGTH];
-    SHA1(reinterpret_cast<const unsigned char*>(s.data()), s.size(), digest);
-    // fold first 8 bytes into uint64_t
-    uint64_t v = 0;
-    for (int i = 0; i < 8; ++i) v = (v << 8) | digest[i];
-    return v;
+ConsistentHash::ConsistentHash(const ConsistentHash& other) {
+    std::lock_guard<std::mutex> lock(other.mutex_);
+    virtual_nodes_ = other.virtual_nodes_;
+    ring_ = other.ring_;
+    node_hashes_ = other.node_hashes_;
+}
+
+ConsistentHash& ConsistentHash::operator=(const ConsistentHash& other) {
+    if (this == &other) return *this;
+    std::lock_guard<std::mutex> lock_this(mutex_);
+    std::lock_guard<std::mutex> lock_other(other.mutex_);
+    virtual_nodes_ = other.virtual_nodes_;
+    ring_ = other.ring_;
+    node_hashes_ = other.node_hashes_;
+    return *this;
+}
+
+// Portable 64-bit hash using std::hash with a simple mixing step
+uint64_t mix_u64(uint64_t x) {
+    x += 0x9e3779b97f4a7c15ULL;
+    x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9ULL;
+    x = (x ^ (x >> 27)) * 0x94d049bb133111ebULL;
+    x = x ^ (x >> 31);
+    return x;
 }
 
 uint64_t ConsistentHash::hash_str(const std::string &s) const {
-    return sha1_hash64(s);
+    std::hash<std::string> hasher;
+    uint64_t h = static_cast<uint64_t>(hasher(s));
+    return mix_u64(h);
 }
 
 void ConsistentHash::add_node(const std::string &node_id) {

@@ -30,7 +30,10 @@ public:
 
     // For tests: read local store
     bool get_local(const std::string& key, std::string& value) const;
-
+    // For tests: list local keys
+    std::vector<std::string> list_keys() const;
+    // For testing: remove local key
+    bool remove_local(const std::string& key);
     // Add peer after construction
     void add_peer(const std::shared_ptr<MockReplicator>& peer);
 
