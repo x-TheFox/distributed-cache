@@ -5,7 +5,7 @@ Cache::Cache(size_t maxSize, EvictionPolicyType policy) {
     switch (policy) {
         case EvictionPolicyType::LRU:
             // Use existing LRU implementation
-            evictor_ = std::make_unique<LRUCache<std::string, CacheEntry>>(maxSize);
+            evictor_ = std::make_unique<LRUCache>(maxSize);
             break;
         case EvictionPolicyType::LFU:
             evictor_ = std::make_unique<LFUEvictor>(maxSize);
