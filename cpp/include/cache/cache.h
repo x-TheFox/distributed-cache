@@ -5,19 +5,9 @@
 #include <optional>
 #include <mutex>
 #include <chrono>
-#include "cache/lru.h"
-
-struct CacheEntry {
-    std::string value;
-    std::chrono::steady_clock::time_point expiry;
-
-    CacheEntry() = default;
-    CacheEntry(const std::string& v, const std::chrono::steady_clock::time_point& e) : value(v), expiry(e) {}
-    bool expired() const {
-        if (expiry == std::chrono::steady_clock::time_point()) return false;
-        return std::chrono::steady_clock::now() > expiry;
-    }
-};
+#include "eviction.h"
+#include "lru.h"
+#include "lfu.h"
 
 class Cache {
 public:
