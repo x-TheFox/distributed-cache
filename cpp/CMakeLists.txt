@@ -40,6 +40,11 @@ add_executable(replication_tests tests/replication_tests.cpp tests/replication_s
 target_link_libraries(replication_tests gtest_main distributed_cache_lib)
 add_test(NAME replication_tests COMMAND replication_tests)
 
+# Raft unit tests
+add_executable(raft_tests tests/raft_tests.cpp)
+target_link_libraries(raft_tests gtest_main distributed_cache_lib)
+add_test(NAME raft_tests COMMAND raft_tests)
+
 add_executable(sharder_tests tests/sharder_tests.cpp)
 target_link_libraries(sharder_tests gtest_main distributed_cache_lib)
 add_test(NAME sharder_tests COMMAND sharder_tests)
