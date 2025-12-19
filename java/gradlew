@@ -1,0 +1,17 @@
+#!/usr/bin/env sh
+set -e
+
+# Gradle wrapper script
+# This script is used to invoke the Gradle build system.
+
+# Determine the location of the Gradle wrapper jar
+WRAPPER_JAR="$(dirname "$0")/gradle/wrapper/gradle-wrapper.jar"
+
+# Check if the Gradle wrapper jar exists
+if [ ! -f "$WRAPPER_JAR" ]; then
+  echo "Gradle wrapper jar not found: $WRAPPER_JAR"
+  exit 1
+fi
+
+# Execute the Gradle wrapper
+exec java -jar "$WRAPPER_JAR" "$@"
