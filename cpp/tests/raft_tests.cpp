@@ -20,3 +20,40 @@ TEST(Raft, SingleNodeBecomesLeader) {
     EXPECT_TRUE(node.isLeader());
     node.stop();
 }
+
+TEST(Raft, TwoNodeDeterministicElection) {
+    RaftNode a("a", {"b"});
+    RaftNode b("b", {"a"});
+
+    // Hook up peer RPC callables to directly call handleRequestVote on the peer
+    a.setPeerRequestVoteFn([&](const std::string& peer_id, uint64_t term, const std::string& candidate){
+        if (peer_id == "b") return b.handleRequestVote(term, candidate);
+        return false;
+    });
+
+    b.setPeerRequestVoteFn([&](const std::string& peer_id, uint64_t term, const std::string& candidate){
+        if (peer_id == "a") return a.handleRequestVote(term, candidate);
+        return false;
+    });
+
+    // Make A have a shorter timeout so it should win deterministically
+    a.setElectionTimeoutMs(30);
+    b.setElectionTimeoutMs(150);
+
+    a.start();
+    b.start();
+
+    // Wait up to ~1s for election outcome
+    bool a_leader = false;
+    for (int i = 0; i < 40; ++i) {
+        if (a.isLeader()) { a_leader = true; break; }
+        if (b.isLeader()) break; // if b became leader it's ok
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    }
+
+    EXPECT_TRUE(a_leader);
+
+    a.stop();
+    b.stop();
+}
+

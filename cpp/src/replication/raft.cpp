@@ -27,7 +27,7 @@ void RaftNode::stop() {
 }
 
 void RaftNode::electionLoop() {
-    // Simple election logic: single-node becomes leader after timeout
+    // Very small, simple election implementation for tests: candidate requests votes from peers via peer_request_vote_fn_
     std::mt19937 rng(std::random_device{}());
     while (running_) {
         int timeout = randomizedElectionTimeoutMs();
@@ -42,7 +42,41 @@ void RaftNode::electionLoop() {
             return; // leader elected; election loop can stop for now
         }
 
-        // TODO: implement RequestVote RPC and majority voting across peers
+        // Start election
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            state_ = State::Candidate;
+            current_term_++;
+            voted_for_ = id_;
+            voted_term_ = current_term_;
+        }
+
+        int votes = 1; // self vote
+        uint64_t term_snapshot = current_term_;
+
+        // Request votes from peers via configured callable
+        if (peer_request_vote_fn_) {
+            for (const auto& p : peers_) {
+                bool granted = false;
+                try {
+                    granted = peer_request_vote_fn_(p, term_snapshot, id_);
+                } catch (...) {
+                    granted = false;
+                }
+                if (granted) votes++;
+            }
+        }
+
+        // Check majority
+        size_t total_nodes = peers_.size() + 1;
+        if (votes > static_cast<int>(total_nodes / 2)) {
+            std::lock_guard<std::mutex> lock(mutex_);
+            state_ = State::Leader;
+            // stop election loop for now; in a real implementation we'd continue sending heartbeats
+            return;
+        }
+
+        // else, election failed; try again after next timeout
     }
 }
 
@@ -51,6 +85,28 @@ int RaftNode::randomizedElectionTimeoutMs() const {
     std::mt19937 gen(rd());
     std::uniform_int_distribution<> dist(election_timeout_min_ms_, election_timeout_max_ms_);
     return dist(gen);
+}
+
+void RaftNode::setPeerRequestVoteFn(PeerRequestVoteFn fn) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    peer_request_vote_fn_ = std::move(fn);
+}
+
+bool RaftNode::handleRequestVote(uint64_t term, const std::string& candidate_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (term < current_term_) return false;
+    if (term > current_term_) {
+        current_term_ = term;
+        voted_for_.clear();
+        voted_term_ = 0;
+        state_ = State::Follower;
+    }
+    if (voted_term_ != current_term_ || voted_for_.empty()) {
+        voted_for_ = candidate_id;
+        voted_term_ = current_term_;
+        return true;
+    }
+    return false;
 }
 
 bool RaftNode::appendEntry(const std::string& data) {
