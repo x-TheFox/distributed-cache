@@ -166,6 +166,28 @@ jobs:
           name: junit-coverage
           path: cpp/build-coverage/junit-coverage.xml
 
+  benchmarks:
+    name: Benchmarks
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install deps
+        run: sudo apt-get update && sudo apt-get install -y build-essential cmake
+      - name: Build perf_bench
+        run: cmake -S cpp -B cpp/build -DCMAKE_BUILD_TYPE=Release && cmake --build cpp/build -- -j
+      - name: Run benchmark harness (small)
+        run: |
+          chmod +x ./scripts/bench/run_bench.sh
+          ./scripts/bench/run_bench.sh --ops 20000 --threads 2 --iters 3 --help >/dev/null || true
+          ./scripts/bench/run_bench.sh --ops 20000 --threads 2 --iters 3 --dist zipf
+      - name: Upload benchmark results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmarks-${{ runner.os }}-${{ github.run_id }}
+          path: benchmarks/results
+
   format-and-lint:
     name: Formatting & Lint
     runs-on: ubuntu-latest

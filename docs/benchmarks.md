@@ -21,6 +21,14 @@ The benchmark supports these options:
 - `--policy` or `-p` : `lru` (default) or `lfu`
 - `--ops` or `-n` : total number of put/get operations to perform (default 100000)
 - `--threads` or `-t` : number of worker threads (default 4)
+- `--dist` or `-d` : key distribution. Options: `uniform` (default), `zipf`
+  - `--zipf-n` : number of distinct keys (Zipf `n` parameter) (default 1000)
+  - `--zipf-s` : Zipf exponent `s` (default 1.0)
+
+You can also set the distribution through environment variables:
+
+- `KEY_DISTRIBUTION=zipf` to use zipfian keys
+- `ZIPF_N` and `ZIPF_S` to tune Zipf parameters
 
 Examples:
 

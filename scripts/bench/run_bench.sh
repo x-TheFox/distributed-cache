@@ -13,6 +13,9 @@ OPS=100000
 THREADS=4
 ITERS=5
 POLICIES=(lru lfu)
+DIST="uniform"
+ZIPF_N=1000
+ZIPF_S=1.0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -25,13 +28,17 @@ while [[ $# -gt 0 ]]; do
 done
 
 CSV="$OUT_DIR/results.csv"
-echo "policy,iter,ops,threads,duration_s,cache_size,hits,misses" > "$CSV"
+echo "policy,iter,ops,threads,dist,zipf_n,zipf_s,duration_s,cache_size,hits,misses" > "$CSV"
 
 for policy in "${POLICIES[@]}"; do
   for ((i=1;i<=ITERS;i++)); do
-    echo "Running policy=$policy iter=$i ops=$OPS threads=$THREADS"
+    echo "Running policy=$policy iter=$i ops=$OPS threads=$THREADS dist=$DIST zipf_n=$ZIPF_N zipf_s=$ZIPF_S"
     # Run the benchmark; capture output
-    OUT="$($BUILD_BIN --policy "$policy" --ops "$OPS" --threads "$THREADS")"
+    CMD=("$BUILD_BIN" "--policy" "$policy" "--ops" "$OPS" "--threads" "$THREADS")
+    if [[ "$DIST" == "zipf" ]]; then
+      CMD+=("--dist" "zipf" "--zipf-n" "$ZIPF_N" "--zipf-s" "$ZIPF_S")
+    fi
+    OUT="$(${CMD[@]})"
     # Parse output lines (expects the perf_bench format)
     # Example output lines:
     # Completed 10000 ops (4 threads) in 0.065953s
@@ -43,7 +50,7 @@ for policy in "${POLICIES[@]}"; do
     HITS=$(echo "$STATS_LINE" | sed -n 's/.*hits=\([0-9]*\),.*/\1/p')
     MISSES=$(echo "$STATS_LINE" | sed -n 's/.*misses=\([0-9]*\).*/\1/p')
 
-    echo "${policy},${i},${OPS},${THREADS},${DURATION},${CACHE_SIZE},${HITS},${MISSES}" >> "$CSV"
+    echo "${policy},${i},${OPS},${THREADS},${DIST},${ZIPF_N},${ZIPF_S},${DURATION},${CACHE_SIZE},${HITS},${MISSES}" >> "$CSV"
   done
 done
 
