@@ -5,7 +5,7 @@
 #include <optional>
 #include <mutex>
 #include <chrono>
-#include "lru.h"
+#include "cache/lru.h"
 
 struct CacheEntry {
     std::string value;
