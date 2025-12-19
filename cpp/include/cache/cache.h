@@ -21,7 +21,7 @@ struct CacheEntry {
 
 class Cache {
 public:
-    Cache(size_t maxSize);
+    Cache(size_t maxSize, EvictionPolicyType policy = EvictionPolicyType::LRU);
     ~Cache();
 
     // ttl_ms = 0 means no expiry
@@ -34,7 +34,7 @@ public:
     uint64_t misses() const;
 
 private:
-    LRUCache<std::string, CacheEntry> lru_;
+    std::unique_ptr<EvictionPolicyInterface> evictor_;
     mutable std::mutex mutex_;
     uint64_t hits_{0};
     uint64_t misses_{0};
