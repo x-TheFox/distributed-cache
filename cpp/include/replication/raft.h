@@ -49,6 +49,9 @@ public:
     // WAL support
     void setWalPath(const std::string& path);
 
+    // Async replication control
+    void setReplicationIntervalMs(int ms);
+
 private:
     // In-memory log entries
     std::vector<std::string> log_;
@@ -58,6 +61,16 @@ private:
 
     // RPC callable
     PeerAppendEntriesFn peer_append_entries_fn_;
+
+    // Replication state
+    std::unordered_map<std::string, size_t> match_index_;
+    std::unordered_map<std::string, size_t> next_index_;
+    size_t commit_index_;
+    std::thread replication_thread_;
+    std::atomic<bool> replication_running_;
+    std::condition_variable replication_cv_;
+    std::mutex replication_mutex_;
+    int replication_interval_ms_;
 
 private:
     enum class State {Follower, Candidate, Leader};

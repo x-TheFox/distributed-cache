@@ -50,6 +50,9 @@ TEST(Raft, TwoNodeDeterministicElection) {
     a.setElectionTimeoutMs(30);
     b.setElectionTimeoutMs(150);
 
+    // Make replication quick
+    a.setReplicationIntervalMs(10);
+
     a.start();
     b.start();
 
@@ -63,13 +66,11 @@ TEST(Raft, TwoNodeDeterministicElection) {
 
     ASSERT_TRUE(a_leader);
 
-    // Leader appends an entry and replication should succeed
+    // Leader appends an entry and appendEntry blocks until commit
     bool ok = a.appendEntry("value1");
     EXPECT_TRUE(ok);
 
-    // Wait briefly for replication
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
-
+    // After commit, follower should have the entry
     EXPECT_EQ(b.logSize(), 1u);
     EXPECT_EQ(b.getLogEntry(0), "value1");
 

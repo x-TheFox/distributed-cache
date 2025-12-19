@@ -8,32 +8,15 @@ namespace replication {
 
 RaftNode::RaftNode(const std::string& id, const std::vector<std::string>& peers)
     : running_(false), state_(State::Follower), current_term_(0), id_(id), peers_(peers),
-      election_timeout_min_ms_(150), election_timeout_max_ms_(300) {}
+      election_timeout_min_ms_(150), election_timeout_max_ms_(300), commit_index_(0), replication_running_(false), replication_interval_ms_(100) {}
 
 RaftNode::~RaftNode() {
     stop();
 }
 
-void RaftNode::start() {
-    bool expected = false;
-    if (!running_.compare_exchange_strong(expected, true)) return;
-    // Load WAL entries on start if present (useful for followers)
-    if (wal_) {
-        auto entries = wal_->replay();
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (log_.empty()) {
-            for (const auto &e : entries) log_.push_back(e);
-        }
-    }
-    // Start election loop
-    election_thread_ = std::thread(&RaftNode::electionLoop, this);
-}
 
-void RaftNode::stop() {
-    bool expected = true;
-    if (!running_.compare_exchange_strong(expected, false)) return;
-    if (election_thread_.joinable()) election_thread_.join();
-}
+
+
 
 void RaftNode::electionLoop() {
     // Very small, simple election implementation for tests: candidate requests votes from peers via peer_request_vote_fn_
@@ -104,6 +87,71 @@ void RaftNode::setWalPath(const std::string& path) {
     wal_ = std::make_unique<WAL>(path);
 }
 
+void RaftNode::setReplicationIntervalMs(int ms) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    replication_interval_ms_ = ms;
+}
+
+void RaftNode::start() {
+    bool expected = false;
+    if (!running_.compare_exchange_strong(expected, true)) return;
+    // Load WAL entries on start if present (useful for followers)
+    if (wal_) {
+        auto entries = wal_->replay();
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (log_.empty()) {
+            for (const auto &e : entries) log_.push_back(e);
+        }
+    }
+    // Start election loop
+    election_thread_ = std::thread(&RaftNode::electionLoop, this);
+
+    // Start replication thread
+    replication_running_.store(true);
+    replication_thread_ = std::thread([this]{
+        while (replication_running_.load()) {
+            std::unique_lock<std::mutex> lock(replication_mutex_);
+            replication_cv_.wait_for(lock, std::chrono::milliseconds(replication_interval_ms_));
+            if (!replication_running_.load()) break;
+            // replication logic: for the leader, try to push unreplicated entries
+            if (isLeader()) {
+                std::vector<std::string> to_replicate;
+                {
+                    std::lock_guard<std::mutex> lg(mutex_);
+                    if (!log_.empty()) {
+                        size_t start = commit_index_;
+                        for (size_t i = start; i < log_.size(); ++i) to_replicate.push_back(log_[i]);
+                    }
+                }
+                if (!to_replicate.empty() && peer_append_entries_fn_) {
+                    int successes = 1; // leader
+                    for (const auto &p : peers_) {
+                        bool ok = false;
+                        try {
+                            ok = peer_append_entries_fn_(p, current_term_, id_, to_replicate);
+                        } catch (...) { ok = false; }
+                        if (ok) successes++;
+                    }
+                    size_t total = peers_.size() + 1;
+                    if (successes > static_cast<int>(total/2)) {
+                        std::lock_guard<std::mutex> lg(mutex_);
+                        commit_index_ = log_.size();
+                    }
+                }
+            }
+        }
+    });
+}
+
+void RaftNode::stop() {
+    bool expected = true;
+    if (!running_.compare_exchange_strong(expected, false)) return;
+    if (election_thread_.joinable()) election_thread_.join();
+    replication_running_.store(false);
+    replication_cv_.notify_all();
+    if (replication_thread_.joinable()) replication_thread_.join();
+}
+
 
 bool RaftNode::handleAppendEntries(uint64_t term, const std::string& leader_id, const std::vector<std::string>& entries) {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -132,30 +180,35 @@ std::string RaftNode::getLogEntry(size_t idx) const {
 }
 
 bool RaftNode::appendEntry(const std::string& data) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (!running_ || state_ != State::Leader) return false;
-    // Write to WAL first
-    if (wal_) wal_->append(data);
-    // Append locally
-    log_.push_back(data);
-    uint64_t term_snapshot = current_term_;
+    // Leader appends entry and waits for commit (simplified blocking semantics)
+    if (!running_ || !isLeader()) return false;
 
-    // Replicate synchronously using peer_append_entries_fn_
-    int successes = 1;
-    if (peer_append_entries_fn_) {
-        for (const auto& p : peers_) {
-            bool ok = false;
-            try {
-                ok = peer_append_entries_fn_(p, term_snapshot, id_, std::vector<std::string>{data});
-            } catch (...) {
-                ok = false;
-            }
-            if (ok) successes++;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (wal_) wal_->append(data);
+        log_.push_back(data);
+        // If single-node cluster, commit immediately
+        if (peers_.empty()) {
+            commit_index_ = log_.size();
+            return true;
         }
     }
 
-    size_t total_nodes = peers_.size() + 1;
-    return successes > static_cast<int>(total_nodes / 2);
+    // Wake replication thread to attempt to replicate asap
+    replication_cv_.notify_all();
+
+    // Wait for commit
+    const int max_wait_ms = 2000;
+    int waited = 0;
+    while (waited < max_wait_ms) {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (commit_index_ >= log_.size()) return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        waited += 10;
+    }
+    return false;
 }
 
 
