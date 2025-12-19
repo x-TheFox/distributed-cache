@@ -36,9 +36,13 @@ add_executable(cache_tests tests/cache_tests.cpp)
 target_link_libraries(cache_tests gtest_main distributed_cache_lib)
 add_test(NAME cache_tests COMMAND cache_tests)
 
-add_executable(replication_tests tests/replication_tests.cpp tests/replication_simulator_tests.cpp)
+add_executable(replication_tests tests/replication_tests.cpp tests/replication_simulator_tests.cpp tests/replication_failover_tests.cpp)
 target_link_libraries(replication_tests gtest_main distributed_cache_lib)
 add_test(NAME replication_tests COMMAND replication_tests)
+
+add_executable(sharder_tests tests/sharder_tests.cpp)
+target_link_libraries(sharder_tests gtest_main distributed_cache_lib)
+add_test(NAME sharder_tests COMMAND sharder_tests)
 
 # Benchmarks
 add_executable(perf_bench benchmarks/perf_bench.cpp)
