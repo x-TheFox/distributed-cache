@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    name: Build & Test (${{ matrix.os }} - ${{ matrix.build_type }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        build_type: [Debug]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install deps (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake cppcheck
+
+      - name: Install deps (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew update
+          brew install cmake cppcheck
+
+      - name: Configure
+        run: cmake -S cpp -B cpp/build -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+
+      - name: Build
+        run: cmake --build cpp/build --config ${{ matrix.build_type }} -- -j
+
+      - name: Run tests
+        run: cd cpp/build && ctest --output-on-failure --parallel 2
+
+      - name: Static analysis (cppcheck)
+        run: |
+          cppcheck --enable=warning,performance,portability --std=c++17 -I cpp/include cpp/src || true
+
+      - name: Upload test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ctest-log
+          path: cpp/build/Testing/Temporary/LastTest.log
+
+  format-and-lint:
+    name: Formatting & Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check formatting (clang-format)
+        run: |
+          sudo apt-get update && sudo apt-get install -y clang-format
+          git ls-files '*.cpp' '*.h' | xargs -n1 -I{} clang-format -style=file -output-replacements-xml {} | grep -q '<replacement ' && (echo "Formatting issues found. Run 'clang-format -i <files>'" && exit 1) || echo "No formatting issues"
