@@ -12,12 +12,8 @@ make
 # Run the C++ server
 ./cache_server &
 
-# Build the Java part of the project
-cd ../../java
-./gradlew build
-
-# Run the Java server
-java -cp build/libs/* com.example.cache.NettyServer &
+# Java implementation removed; script is C++-only now
+cd ../..
 
 # Wait for servers to start
 sleep 5

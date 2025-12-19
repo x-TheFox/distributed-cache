@@ -1,7 +1,7 @@
 # Distributed In-Memory Cache System
 
 ## Overview
-This project implements a distributed in-memory cache system with multi-protocol support, designed for high concurrency and efficient memory management. The system is built using both C++ and Java, allowing for flexibility in deployment and usage.
+This project implements a distributed in-memory cache system with multi-protocol support, designed for high concurrency and efficient memory management. The system is built using C++, focusing on performance and low-level control for production-grade caching.
 
 ## Features
 - **Multi-Protocol Support**: The cache system supports both Memcached and HTTP protocols for client communication.
@@ -10,7 +10,7 @@ This project implements a distributed in-memory cache system with multi-protocol
 - **Networking**: Implements both TCP and UDP servers for handling incoming requests.
 
 ## Project Structure
-The project is organized into two main directories: `cpp` and `java`, each containing the respective implementations and tests.
+The project is organized under the `cpp` directory, which contains the implementation, tests, benchmarks, and related documentation.
 
 ### C++ Implementation
 - **Source Code**: Located in the `cpp/src` directory.
@@ -19,10 +19,7 @@ The project is organized into two main directories: `cpp` and `java`, each conta
 - **Benchmarks**: Performance benchmarks are located in the `cpp/benchmarks` directory.
 - **Documentation**: Design documentation is available in the `cpp/docs` directory.
 
-### Java Implementation
-- **Source Code**: Located in the `java/src/main/java/com/example/cache` directory.
-- **Tests**: Unit tests are in the `java/src/test/java/com/example/cache` directory.
-- **Documentation**: Design documentation is available in the `java/docs` directory.
+**Note:** The Java implementation has been removed; this repository is now maintained as a C++-only project.
 
 ## Setup Instructions
 ### C++
@@ -39,16 +36,7 @@ The project is organized into two main directories: `cpp` and `java`, each conta
    ./cache_server
    ```
 
-### Java
-1. Navigate to the `java` directory.
-2. Build the project using Gradle:
-   ```
-   ./gradlew build
-   ```
-3. Run the server:
-   ```
-   java -cp build/libs/* com.example.cache.NettyServer
-   ```
+
 
 ## Documentation
 - **Architecture**: Detailed architecture diagrams and explanations can be found in `docs/architecture.md`.
