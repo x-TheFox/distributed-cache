@@ -38,6 +38,26 @@ int main(int argc, char** argv) {
 
     std::cout << "Rebalanced " << moved << " keys in " << ms << " ms\n";
 
+    // write a simple CSV result for CI artifact collection
+    try {
+        namespace fs = std::filesystem;
+        auto now = std::chrono::system_clock::now();
+        auto now_t = std::chrono::system_clock::to_time_t(now);
+        std::tm buf{};
+        localtime_r(&now_t, &buf);
+        char ts[64];
+        strftime(ts, sizeof(ts), "%Y%m%d_%H%M%S", &buf);
+        fs::path outdir = fs::path("benchmarks") / "results" / ts;
+        fs::create_directories(outdir);
+        fs::path outfile = outdir / "rebalancer_results.csv";
+        std::ofstream ofs(outfile);
+        ofs << "timestamp,nodes,keys,moved,ms\n";
+        ofs << ts << "," << NODES+1 << "," << KEYS << "," << moved << "," << ms << "\n";
+        ofs.close();
+    } catch (const std::exception &e) {
+        std::cerr << "Failed to write results: " << e.what() << "\n";
+    }
+
     // cleanup
     for (auto &p : nodes) p.second->stop();
     return 0;
