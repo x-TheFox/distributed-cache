@@ -1,5 +1,7 @@
 # Distributed In-Memory Cache System
 
+[![CI](https://github.com/x-TheFox/distributed-cache/actions/workflows/ci.yml/badge.svg)](https://github.com/x-TheFox/distributed-cache/actions/workflows/ci.yml) [![codecov](https://codecov.io/gh/x-TheFox/distributed-cache/branch/main/graph/badge.svg)](https://codecov.io/gh/x-TheFox/distributed-cache)
+
 ## Overview
 This project implements a distributed in-memory cache system with multi-protocol support, designed for high concurrency and efficient memory management. The system is built using C++, focusing on performance and low-level control for production-grade caching.
 
@@ -41,6 +43,15 @@ The project is organized under the `cpp` directory, which contains the implement
 ## Documentation
 - **Architecture**: Detailed architecture diagrams and explanations can be found in `docs/architecture.md`.
 - **Protocols**: Information on the protocols used in the cache system is available in `docs/protocol.md`.
+
+## CI & Quality
+- The CI pipeline runs on pushes and pull requests with a Linux/macOS matrix and includes:
+  - Build and unit tests (GoogleTest)
+  - Static analysis (cppcheck)
+  - Formatting checks (clang-format)
+  - Sanitizers (ASan/UBSan)
+  - Coverage collection and upload to Codecov
+- Test results (JUnit XML) and coverage artifacts are attached to workflow runs; Codecov also posts test/failure insights to PRs.
 
 ## Contributing
 Contributions are welcome! Please refer to the `CONTRIBUTING.md` file for guidelines.
