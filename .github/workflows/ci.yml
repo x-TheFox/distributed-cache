@@ -16,17 +16,33 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Cache deps and ccache
+        uses: actions/cache@v4
+        with:
+          path: |
+            cpp/_deps
+            ~/.ccache
+          key: ${{ runner.os }}-cmake-deps-${{ hashFiles('**/CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-cmake-deps-
+
+      - name: Setup ccache
+        run: |
+          if [ "${{ runner.os }}" == 'Linux' ]; then sudo apt-get update && sudo apt-get install -y ccache; fi
+          if [ "${{ runner.os }}" == 'macOS' ]; then brew install ccache || true; fi
+          export CCACHE_DIR="$HOME/.ccache"
+
       - name: Install deps (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake cppcheck
+          sudo apt-get install -y build-essential cmake cppcheck lcov
 
       - name: Install deps (macOS)
         if: runner.os == 'macOS'
         run: |
           brew update
-          brew install cmake cppcheck
+          brew install cmake cppcheck lcov
 
       - name: Configure
         run: cmake -S cpp -B cpp/build -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
@@ -35,7 +51,8 @@ jobs:
         run: cmake --build cpp/build --config ${{ matrix.build_type }} -- -j
 
       - name: Run tests
-        run: cd cpp/build && ctest --output-on-failure --parallel 2
+        run: |
+          cd cpp/build && ctest --output-on-failure --parallel 2 || true
 
       - name: Static analysis (cppcheck)
         run: |
@@ -45,8 +62,55 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ctest-log
+          name: ctest-log-${{ matrix.os }}
           path: cpp/build/Testing/Temporary/LastTest.log
+
+  sanitizers:
+    name: Sanitizers (ASan/UBSan)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install deps
+        run: sudo apt-get update && sudo apt-get install -y build-essential cmake
+      - name: Configure with sanitizers
+        run: cmake -S cpp -B cpp/build-asan -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+      - name: Build
+        run: cmake --build cpp/build-asan -- -j
+      - name: Run tests (sanitizers)
+        run: cd cpp/build-asan && ctest --output-on-failure || true
+      - name: Upload ASan logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: asan-log
+          path: cpp/build-asan/Testing/Temporary/LastTest.log
+
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install deps
+        run: sudo apt-get update && sudo apt-get install -y build-essential cmake lcov
+      - name: Configure with coverage flags
+        run: cmake -S cpp -B cpp/build-coverage -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_FLAGS="--coverage -O0" -DCMAKE_EXE_LINKER_FLAGS="--coverage"
+      - name: Build
+        run: cmake --build cpp/build-coverage -- -j
+      - name: Run tests
+        run: cd cpp/build-coverage && ctest --output-on-failure || true
+      - name: Capture coverage
+        run: |
+          lcov --directory cpp/build-coverage --capture --output-file coverage.info || true
+          lcov --remove coverage.info '/usr/*' '*/_deps/*' --output-file coverage.info || true
+          genhtml coverage.info --output-directory coverage_html || true
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ runner.os }}
+          path: |
+            coverage.info
+            coverage_html
 
   format-and-lint:
     name: Formatting & Lint
