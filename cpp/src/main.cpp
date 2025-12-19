@@ -1,6 +1,8 @@
 #include <iostream>
 #include "cache/cache.h"
 #include "network/transport.h"
+#include "network/tcp_server.h"
+#include "network/udp_server.h"
 
 int main(int argc, char* argv[]) {
     // Initialize the cache system with a default capacity
