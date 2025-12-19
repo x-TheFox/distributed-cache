@@ -47,3 +47,22 @@ The binary prints total time, cache size, and hit/miss statistics. Use these out
 
 - Add randomized workloads (Zipfian distributions) and record latency percentiles.
 - Add a harness to generate plots and compare policy trade-offs across memory vs throughput.
+
+## Running automated benchmark harness
+
+A small harness is included at `scripts/bench/run_bench.sh`. It runs `perf_bench` for LRU and LFU across multiple iterations and writes a CSV at `benchmarks/results/<timestamp>/results.csv`.
+
+Example:
+
+```bash
+# Build first (from repo root)
+mkdir -p cpp/build && cd cpp/build
+cmake .. && cmake --build . -- -j
+
+# Run harness (from repo root)
+./scripts/bench/run_bench.sh --ops 100000 --threads 8 --iters 10
+
+# Inspect results
+cat benchmarks/results/<timestamp>/results.csv
+```
+
