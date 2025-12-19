@@ -181,6 +181,9 @@ jobs:
           chmod +x ./scripts/bench/run_bench.sh
           ./scripts/bench/run_bench.sh --ops 20000 --threads 2 --iters 3 --help >/dev/null || true
           ./scripts/bench/run_bench.sh --ops 20000 --threads 2 --iters 3 --dist zipf
+      - name: Run rebalancer benchmark
+        run: |
+          cd cpp/build && ./rebalancer_bench || true
       - name: Upload benchmark results
         if: always()
         uses: actions/upload-artifact@v4

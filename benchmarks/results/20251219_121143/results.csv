@@ -1,0 +1,3 @@
+policy,iter,ops,threads,dist,zipf_n,zipf_s,duration_s,cache_size,hits,misses
+lru,1,2000,2,zipf,200,1.2,0.00810687,1024,2000,0
+lfu,1,2000,2,zipf,200,1.2,0.00966533,1024,1998,2
