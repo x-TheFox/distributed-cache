@@ -1,4 +1,5 @@
 #include "replication/raft.h"
+#include "replication/log.h"
 #include <thread>
 #include <random>
 #include <iostream>
@@ -26,6 +27,14 @@ void RaftNode::electionLoop() {
         std::this_thread::sleep_for(std::chrono::milliseconds(timeout));
         if (!running_) break;
 
+        // Avoid starting an election immediately after receiving AppendEntries (heartbeat)
+        {
+            auto now = std::chrono::steady_clock::now();
+            std::lock_guard<std::mutex> lg(mutex_);
+            auto since = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_append_time_).count();
+            if (since < timeout) continue;
+        }
+
             // If there are no peers, become leader immediately
         if (peers_.empty()) {
             std::lock_guard<std::mutex> lock(mutex_);
@@ -34,7 +43,7 @@ void RaftNode::electionLoop() {
             // Load WAL if present
             if (wal_) {
                 auto entries = wal_->replay();
-                for (const auto &e : entries) log_.push_back(e);
+                for (const auto &e : entries) log_.push_back(Entry{e.first, e.second});
             }
             return; // leader elected; election loop can stop for now
         }
@@ -46,6 +55,7 @@ void RaftNode::electionLoop() {
             current_term_++;
             voted_for_ = id_;
             voted_term_ = current_term_;
+            LOG(LogLevel::DEBUG, "[raft] node=" << id_ << " starting election term=" << current_term_);
         }
 
         int votes = 1; // self vote
@@ -69,6 +79,7 @@ void RaftNode::electionLoop() {
         if (votes > static_cast<int>(total_nodes / 2)) {
             std::lock_guard<std::mutex> lock(mutex_);
             state_ = State::Leader;
+            LOG(LogLevel::INFO, "[raft] node=" << id_ << " elected leader term=" << current_term_ << " votes=" << votes);
             // Initialize leader's replication bookkeeping
             for (const auto &p : peers_) {
                 next_index_[p] = log_.size();
@@ -105,8 +116,13 @@ void RaftNode::start() {
         auto entries = wal_->replay();
         std::lock_guard<std::mutex> lock(mutex_);
         if (log_.empty()) {
-            for (const auto &e : entries) log_.push_back(e);
+            for (const auto &p : entries) log_.push_back(Entry{p.first, p.second});
         }
+    }
+    // initialize last append time
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        last_append_time_ = std::chrono::steady_clock::now();
     }
     // Start election loop
     election_thread_ = std::thread(&RaftNode::electionLoop, this);
@@ -120,14 +136,6 @@ void RaftNode::start() {
             if (!replication_running_.load()) break;
             // replication logic: for the leader, try to push unreplicated entries
             if (isLeader()) {
-                std::vector<std::string> to_replicate;
-                {
-                    std::lock_guard<std::mutex> lg(mutex_);
-                    if (!log_.empty()) {
-                        size_t start = commit_index_;
-                        for (size_t i = start; i < log_.size(); ++i) to_replicate.push_back(log_[i]);
-                    }
-                }
                 if (peer_append_entries_fn_) {
                     int successes = 1; // leader counts as replicated
                     for (const auto &p : peers_) {
@@ -137,36 +145,68 @@ void RaftNode::start() {
                             start_index = next_index_[p];
                         }
 
-                        if (start_index >= log_.size()) {
-                            // nothing to send
-                            if (match_index_.count(p)) {
-                                // already up-to-date
-                                successes += (match_index_[p] >= log_.size()) ? 1 : 0;
-                            }
-                            continue;
-                        }
-
-                        std::vector<std::string> entries;
+                        std::vector<Entry> entries;
+                        size_t prev_index = (start_index == 0) ? static_cast<size_t>(-1) : start_index - 1;
+                        uint64_t prev_term = 0;
                         {
                             std::lock_guard<std::mutex> lg(mutex_);
-                            for (size_t i = start_index; i < log_.size(); ++i) entries.push_back(log_[i]);
+                            if (start_index < log_.size()) {
+                                for (size_t i = start_index; i < log_.size(); ++i) entries.push_back(log_[i]);
+                            }
+                            if (prev_index != static_cast<size_t>(-1) && prev_index < log_.size()) prev_term = log_[prev_index].term;
                         }
 
-                        bool ok = false;
+                        RaftNode::AppendEntriesResult res{false, 0, 0};
                         try {
-                            ok = peer_append_entries_fn_(p, current_term_, id_, entries);
-                        } catch (...) { ok = false; }
+                            res = peer_append_entries_fn_(p, current_term_, id_, prev_index, prev_term, entries);
+                        } catch (...) { res.success = false; res.term = 0; res.match_index = 0; }
 
-                        if (ok) {
+                        LOG(LogLevel::DEBUG, "[raft] leader=" << id_ << " send to " << p << " ok=" << res.success << " entries=" << entries.size() << " term=" << res.term << " match_index=" << res.match_index);
+
+                        if (res.term > current_term_) {
+                            // follower has higher term -> step down
+                            std::lock_guard<std::mutex> lg(mutex_);
+                            std::cerr << "[raft] leader=" << id_ << " observed higher term " << res.term << " from " << p << ", stepping down\n";
+                            current_term_ = res.term;
+                            state_ = State::Follower;
+                            // stop trying to replicate for now
+                            break;
+                        }
+
+                        if (res.success) {
                             // update match and next indices
                             std::lock_guard<std::mutex> lg(mutex_);
-                            match_index_[p] = start_index + entries.size();
-                            next_index_[p] = match_index_[p];
+                            if (!entries.empty()) {
+                                match_index_[p] = res.match_index;
+                                next_index_[p] = match_index_[p];
+                            } else {
+                                // heartbeat, leader's match index remains unchanged except set to log_.size()
+                                match_index_[p] = std::max(match_index_[p], log_.size());
+                                next_index_[p] = std::max(next_index_[p], match_index_[p]);
+                            }
                             successes++;
                         } else {
-                            // back off next_index
+                            // improved backtrack using follower's conflict hint
                             std::lock_guard<std::mutex> lg(mutex_);
-                            if (next_index_[p] > 0) next_index_[p]--;
+                            if (res.conflict_term != 0) {
+                                // follower indicates a conflicting term; find last index in leader's log with that term
+                                ssize_t last_idx = -1;
+                                for (ssize_t i = static_cast<ssize_t>(log_.size()) - 1; i >= 0; --i) {
+                                    if (log_[i].term == res.conflict_term) { last_idx = i; break; }
+                                }
+                                if (last_idx >= 0) {
+                                    // leader has entries with that term; set next index to last_idx + 1
+                                    next_index_[p] = static_cast<size_t>(last_idx) + 1;
+                                } else {
+                                    // leader doesn't have that term; jump to follower's first index of the conflicting term
+                                    next_index_[p] = res.conflict_index;
+                                }
+                            } else {
+                                // no conflict term hint; follower indicated missing entries larger than its log
+                                next_index_[p] = res.conflict_index;
+                            }
+                            // ensure we don't advance next_index beyond current log size
+                            if (next_index_[p] > log_.size()) next_index_[p] = log_.size();
                         }
                     }
 
@@ -186,6 +226,18 @@ void RaftNode::start() {
                         size_t new_commit = all[majority_pos];
                         std::lock_guard<std::mutex> lg(mutex_);
                         if (new_commit > commit_index_) commit_index_ = new_commit;
+                        // reset failure counter
+                        consecutive_failed_replication_rounds_ = 0;
+                    } else {
+                        // failed to reach majority this round
+                        consecutive_failed_replication_rounds_++;
+                        if (consecutive_failed_replication_rounds_ >= max_consecutive_failed_rounds_before_stepdown_) {
+                            std::lock_guard<std::mutex> lg(mutex_);
+                            std::cerr << "[raft] leader=" << id_ << " unable to reach majority for " << consecutive_failed_replication_rounds_ << " rounds; stepping down\n";
+                            state_ = State::Follower;
+                            // reset counter
+                            consecutive_failed_replication_rounds_ = 0;
+                        }
                     }
                 }
             }
@@ -203,19 +255,73 @@ void RaftNode::stop() {
 }
 
 
-bool RaftNode::handleAppendEntries(uint64_t term, const std::string& leader_id, const std::vector<std::string>& entries) {
+RaftNode::AppendEntriesResult RaftNode::handleAppendEntries(uint64_t term, const std::string& leader_id, size_t prev_log_index, uint64_t prev_log_term, const std::vector<Entry>& entries) {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (term < current_term_) return false;
+    // debug print to trace AppendEntries handling
+    LOG(LogLevel::DEBUG, "[raft] node=" << id_ << " recv AppendEntries term=" << term << " my_term=" << current_term_ << " leader=" << leader_id << " prev_log_index=" << prev_log_index << " prev_log_term=" << prev_log_term << " entries=" << entries.size());
+    AppendEntriesResult res{false, current_term_, log_.size(), 0, 0};
+    if (term < current_term_) {
+        std::cerr << "[raft] node=" << id_ << " rejecting AppendEntries due to stale term\n";
+        res.success = false;
+        res.term = current_term_;
+        res.match_index = log_.size();
+        res.conflict_term = 0;
+        res.conflict_index = log_.size();
+        return res;
+    }
     if (term > current_term_) {
+        std::cerr << "[raft] node=" << id_ << " updating term from " << current_term_ << " to " << term << " and becoming follower\n";
         current_term_ = term;
         state_ = State::Follower;
     }
-    // Append entries to local log and WAL
-    for (const auto& e : entries) {
-        if (wal_) wal_->append(e);
-        log_.push_back(e);
+
+    // Validate prev_log_index/term
+    if (prev_log_index != static_cast<size_t>(-1)) {
+        if (prev_log_index >= log_.size()) {
+            // Missing prior entry
+            res.success = false;
+            res.term = current_term_;
+            // indicate missing entries: conflict_term == 0, conflict_index = current log size
+            res.conflict_term = 0;
+            res.conflict_index = log_.size();
+            std::cerr << "[raft] node=" << id_ << " rejecting AppendEntries: prev_log_index too large (" << prev_log_index << " >= " << log_.size() << ")\n";
+            return res;
+        }
+        if (log_[prev_log_index].term != prev_log_term) {
+            // Term mismatch -> conflict; provide conflict term and first index of that term
+            uint64_t bad_term = log_[prev_log_index].term;
+            size_t first_index = prev_log_index;
+            // Scan backwards to find first index of the conflicting term
+            while (first_index > 0 && log_[first_index - 1].term == bad_term) --first_index;
+            res.success = false;
+            res.term = current_term_;
+            res.conflict_term = bad_term;
+            res.conflict_index = first_index;
+            std::cerr << "[raft] node=" << id_ << " rejecting AppendEntries: term mismatch at prev_log_index=" << prev_log_index << " conflict_term=" << bad_term << " conflict_index=" << first_index << "\n";
+            return res;
+        }
     }
-    return true;
+
+    // Accept: truncate conflicting entries and append new ones
+    if (!entries.empty()) {
+        size_t start_pos = (prev_log_index == static_cast<size_t>(-1)) ? 0 : prev_log_index + 1;
+        if (start_pos < log_.size()) {
+            log_.resize(start_pos);
+        }
+        for (const auto &e : entries) {
+            if (wal_) wal_->append(e.term, e.data);
+            log_.push_back(e);
+        }
+    }
+
+    // update last append time (heartbeat)
+    last_append_time_ = std::chrono::steady_clock::now();
+    res.success = true;
+    res.term = current_term_;
+    res.match_index = log_.size();
+    res.conflict_term = 0;
+    res.conflict_index = 0;
+    return res;
 }
 
 size_t RaftNode::logSize() const {
@@ -223,10 +329,28 @@ size_t RaftNode::logSize() const {
     return log_.size();
 }
 
+bool RaftNode::compactLogPrefix(size_t count) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!wal_) return false;
+    if (count == 0) return true;
+    if (count > log_.size()) return false;
+    // capture term of last dropped entry
+    uint64_t last_term = log_[count - 1].term;
+    // remove from in-memory log
+    log_.erase(log_.begin(), log_.begin() + static_cast<ssize_t>(count));
+    // persist compaction to WAL
+    bool ok = wal_->truncateHead(count);
+    if (!ok) return false;
+    // record compacted metadata
+    last_included_index_ += count;
+    last_included_term_ = last_term;
+    return true;
+}
+
 std::string RaftNode::getLogEntry(size_t idx) const {
     std::lock_guard<std::mutex> lock(mutex_);
     if (idx >= log_.size()) return "";
-    return log_[idx];
+    return log_[idx].data;
 }
 
 bool RaftNode::appendEntry(const std::string& data) {
@@ -235,8 +359,8 @@ bool RaftNode::appendEntry(const std::string& data) {
 
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (wal_) wal_->append(data);
-        log_.push_back(data);
+        if (wal_) wal_->append(current_term_, data);
+        log_.push_back(Entry{current_term_, data});
         // If single-node cluster, commit immediately
         if (peers_.empty()) {
             commit_index_ = log_.size();
@@ -248,7 +372,7 @@ bool RaftNode::appendEntry(const std::string& data) {
     replication_cv_.notify_all();
 
     // Wait for commit
-    const int max_wait_ms = 2000;
+    const int max_wait_ms = 15000;
     int waited = 0;
     while (waited < max_wait_ms) {
         {
@@ -276,8 +400,13 @@ void RaftNode::setPeerRequestVoteFn(PeerRequestVoteFn fn) {
 
 bool RaftNode::handleRequestVote(uint64_t term, const std::string& candidate_id) {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (term < current_term_) return false;
+    LOG(LogLevel::DEBUG, "[raft] node=" << id_ << " handleRequestVote term=" << term << " my_term=" << current_term_ << " candidate=" << candidate_id);
+    if (term < current_term_) {
+        LOG(LogLevel::DEBUG, "[raft] node=" << id_ << " rejecting RequestVote due to stale term");
+        return false;
+    }
     if (term > current_term_) {
+        LOG(LogLevel::INFO, "[raft] node=" << id_ << " updating term from " << current_term_ << " to " << term << " and clearing votes");
         current_term_ = term;
         voted_for_.clear();
         voted_term_ = 0;

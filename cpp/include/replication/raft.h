@@ -34,10 +34,18 @@ public:
     // Direct RPC handler used by tests (simulates receiving RequestVote)
     bool handleRequestVote(uint64_t term, const std::string& candidate_id);
 
-    // AppendEntries RPC
-    using PeerAppendEntriesFn = std::function<bool(const std::string& peer_id, uint64_t term, const std::string& leader_id, const std::vector<std::string>& entries)>;
+    // Log entry type with per-entry term
+    struct Entry { uint64_t term; std::string data; };
+
+    // AppendEntries RPC: include prev log index/term and entries; result includes success, current term, and match_index
+    struct AppendEntriesResult { bool success; uint64_t term; size_t match_index; uint64_t conflict_term; size_t conflict_index; };
+    using PeerAppendEntriesFn = std::function<AppendEntriesResult(const std::string& peer_id, uint64_t term, const std::string& leader_id, size_t prev_log_index, uint64_t prev_log_term, const std::vector<Entry>& entries)>;
     void setPeerAppendEntriesFn(PeerAppendEntriesFn fn);
-    bool handleAppendEntries(uint64_t term, const std::string& leader_id, const std::vector<std::string>& entries);
+    AppendEntriesResult handleAppendEntries(uint64_t term, const std::string& leader_id, size_t prev_log_index, uint64_t prev_log_term, const std::vector<Entry>& entries);
+
+    // Test helpers
+    uint64_t getCurrentTermForTest() const { std::lock_guard<std::mutex> lock(mutex_); return current_term_; }
+    void updateLastAppendTimeForTest() { std::lock_guard<std::mutex> lock(mutex_); last_append_time_ = std::chrono::steady_clock::now(); }
 
     // Append locally (used by leader)
     bool appendEntry(const std::string& data);
@@ -49,6 +57,10 @@ public:
     // WAL support
     void setWalPath(const std::string& path);
 
+    // Log compaction (testing & maintenance helper): drop `count` entries from log head and compact WAL
+    // Note: this is a simple compaction helper for tests; full snapshotting/sync will be more comprehensive.
+    bool compactLogPrefix(size_t count);
+
     // Async replication control
     void setReplicationIntervalMs(int ms);
 
@@ -56,8 +68,8 @@ public:
     size_t getCommitIndexForTest() const { std::lock_guard<std::mutex> lock(mutex_); return commit_index_; }
 
 private:
-    // In-memory log entries
-    std::vector<std::string> log_;
+    // In-memory log entries (term + data)
+    std::vector<Entry> log_;
 
     // WAL (optional)
     std::unique_ptr<class WAL> wal_;
@@ -74,6 +86,9 @@ private:
     std::condition_variable replication_cv_;
     std::mutex replication_mutex_;
     int replication_interval_ms_;
+    // heuristic to detect leader isolation
+    int consecutive_failed_replication_rounds_ = 0;
+    int max_consecutive_failed_rounds_before_stepdown_ = 3;
 
 private:
     enum class State {Follower, Candidate, Leader};
@@ -91,6 +106,13 @@ private:
     // Election timing
     int election_timeout_min_ms_;
     int election_timeout_max_ms_;
+
+    // Track last AppendEntries received (heartbeats)
+    std::chrono::steady_clock::time_point last_append_time_;
+
+    // Snapshot/compaction metadata (last included prefix index & term)
+    size_t last_included_index_ = 0;
+    uint64_t last_included_term_ = 0;
 
     // Worker
     std::thread election_thread_;
