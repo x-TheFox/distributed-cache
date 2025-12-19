@@ -1,5 +1,8 @@
 #include <iostream>
 #include <chrono>
+#include <fstream>
+#include <ctime>
+#include <cstdlib>
 #include "sharder/consistent_hash.h"
 #include "sharder/rebalancer.h"
 #include "replication/mock_replicator.h"
@@ -38,24 +41,27 @@ int main(int argc, char** argv) {
 
     std::cout << "Rebalanced " << moved << " keys in " << ms << " ms\n";
 
-    // write a simple CSV result for CI artifact collection
+    // write a simple CSV result for CI artifact collection (portable implementation)
     try {
-        namespace fs = std::filesystem;
-        auto now = std::chrono::system_clock::now();
-        auto now_t = std::chrono::system_clock::to_time_t(now);
+        auto now_t = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
         std::tm buf{};
         localtime_r(&now_t, &buf);
         char ts[64];
         strftime(ts, sizeof(ts), "%Y%m%d_%H%M%S", &buf);
-        fs::path outdir = fs::path("benchmarks") / "results" / ts;
-        fs::create_directories(outdir);
-        fs::path outfile = outdir / "rebalancer_results.csv";
+        std::string outdir = std::string("benchmarks/results/") + ts;
+        std::string cmd = std::string("mkdir -p ") + outdir;
+        std::system(cmd.c_str());
+        std::string outfile = outdir + "/rebalancer_results.csv";
         std::ofstream ofs(outfile);
-        ofs << "timestamp,nodes,keys,moved,ms\n";
-        ofs << ts << "," << NODES+1 << "," << KEYS << "," << moved << "," << ms << "\n";
-        ofs.close();
-    } catch (const std::exception &e) {
-        std::cerr << "Failed to write results: " << e.what() << "\n";
+        if (ofs) {
+            ofs << "timestamp,nodes,keys,moved,ms\n";
+            ofs << ts << "," << (NODES+1) << "," << KEYS << "," << moved << "," << ms << "\n";
+            ofs.close();
+        } else {
+            std::cerr << "Failed to open output file: " << outfile << "\n";
+        }
+    } catch (...) {
+        std::cerr << "Failed to write results\n";
     }
 
     // cleanup
