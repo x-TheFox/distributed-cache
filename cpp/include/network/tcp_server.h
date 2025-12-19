@@ -1,10 +1,12 @@
+#ifndef TCP_SERVER_H
+#define TCP_SERVER_H
+
 #include <iostream>
 #include <thread>
 #include <vector>
 #include <netinet/in.h>
 #include <unistd.h>
 #include <cstring>
-#include "transport.h"
 
 class TCPServer {
 public:
@@ -74,3 +76,5 @@ private:
         close(client_fd);
     }
 };
+
+#endif // TCP_SERVER_H
