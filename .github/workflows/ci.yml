@@ -53,6 +53,14 @@ jobs:
       - name: Run tests
         run: |
           cd cpp/build && ctest --output-on-failure --parallel 2 || true
+          # Also run the test binary directly to generate a JUnit XML for Codecov
+          if [ -f ./cache_tests ]; then ./cache_tests --gtest_output=xml:junit.xml || true; fi
+
+      - name: Upload test results to Codecov
+        if: ${{ !cancelled() }}
+        uses: codecov/test-results-action@v1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
 
       - name: Static analysis (cppcheck)
         run: |
@@ -64,6 +72,13 @@ jobs:
         with:
           name: ctest-log-${{ matrix.os }}
           path: cpp/build/Testing/Temporary/LastTest.log
+
+      - name: Upload junit xml
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-${{ matrix.os }}
+          path: cpp/build/junit.xml
 
   sanitizers:
     name: Sanitizers (ASan/UBSan)
@@ -77,13 +92,27 @@ jobs:
       - name: Build
         run: cmake --build cpp/build-asan -- -j
       - name: Run tests (sanitizers)
-        run: cd cpp/build-asan && ctest --output-on-failure || true
+        run: |
+          cd cpp/build-asan && ctest --output-on-failure || true
+          if [ -f ./cache_tests ]; then ./cache_tests --gtest_output=xml:junit-asan.xml || true; fi
+      - name: Upload test results to Codecov (sanitizers)
+        if: ${{ !cancelled() }}
+        uses: codecov/test-results-action@v1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          # The action will pick up junit-asan.xml in the working directory
       - name: Upload ASan logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: asan-log
           path: cpp/build-asan/Testing/Temporary/LastTest.log
+      - name: Upload junit xml (sanitizers)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-asan
+          path: cpp/build-asan/junit-asan.xml
 
   coverage:
     name: Coverage
@@ -97,7 +126,9 @@ jobs:
       - name: Build
         run: cmake --build cpp/build-coverage -- -j
       - name: Run tests
-        run: cd cpp/build-coverage && ctest --output-on-failure || true
+        run: |
+          cd cpp/build-coverage && ctest --output-on-failure || true
+          if [ -f ./cache_tests ]; then ./cache_tests --gtest_output=xml:junit-coverage.xml || true; fi
       - name: Capture coverage
         run: |
           lcov --directory cpp/build-coverage --capture --output-file coverage.info || true
@@ -112,6 +143,12 @@ jobs:
             coverage.info
             coverage_html
 
+      - name: Upload test results to Codecov (coverage)
+        if: ${{ !cancelled() }}
+        uses: codecov/test-results-action@v1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+
       - name: Upload coverage to Codecov
         if: always()
         uses: codecov/codecov-action@v4
@@ -121,6 +158,13 @@ jobs:
           name: codecov-${{ runner.os }}
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
+
+      - name: Upload junit xml (coverage)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-coverage
+          path: cpp/build-coverage/junit-coverage.xml
 
   format-and-lint:
     name: Formatting & Lint
