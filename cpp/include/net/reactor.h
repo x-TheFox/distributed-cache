@@ -8,6 +8,7 @@
 #include <atomic>
 #include <memory>
 #include <sys/types.h>
+#include "net/event_poller.h"
 
 class ThreadPool;
 class Cache;
@@ -31,6 +32,7 @@ private:
     Cache *cache_;
 
     std::unique_ptr<ThreadPool> pool_;
+    std::unique_ptr<net::EventPoller> poller_;
     std::atomic<bool> running_{false};
 
     // per-client buffers (fd -> buffer)

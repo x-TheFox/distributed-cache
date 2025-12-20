@@ -75,7 +75,7 @@ target_link_libraries(resp_bench distributed_cache_lib)
 
 
 # Network & metrics implementation for Reactor/ThreadPool
-set(NET_SOURCES src/net/thread_pool.cpp src/net/reactor.cpp src/metrics/metrics.cpp)
+set(NET_SOURCES src/net/thread_pool.cpp src/net/reactor.cpp src/metrics/metrics.cpp src/net/epoll_poller.cpp src/net/kqueue_poller.cpp)
 # Ensure these are part of the static library
 target_sources(distributed_cache_lib PRIVATE ${NET_SOURCES})
 
