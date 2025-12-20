@@ -53,6 +53,10 @@ add_executable(rebalancer_tests tests/sharder_rebalance_tests.cpp)
 target_link_libraries(rebalancer_tests gtest_main distributed_cache_lib)
 add_test(NAME rebalancer_tests COMMAND rebalancer_tests)
 
+add_executable(resp_tests tests/resp_tests.cpp)
+target_link_libraries(resp_tests gtest_main distributed_cache_lib)
+add_test(NAME resp_tests COMMAND resp_tests)
+
 add_executable(rebalancer_more_tests tests/sharder_rebalance_more_tests.cpp)
 target_link_libraries(rebalancer_more_tests gtest_main distributed_cache_lib)
 add_test(NAME rebalancer_more_tests COMMAND rebalancer_more_tests)
@@ -64,3 +68,18 @@ target_link_libraries(rebalancer_bench distributed_cache_lib)
 # Benchmarks
 add_executable(perf_bench benchmarks/perf_bench.cpp)
 target_link_libraries(perf_bench distributed_cache_lib)
+
+# RESP bench (sync vs async)
+add_executable(resp_bench bench/resp_bench.cpp)
+target_link_libraries(resp_bench distributed_cache_lib)
+
+
+# Network & metrics implementation for Reactor/ThreadPool
+set(NET_SOURCES src/net/thread_pool.cpp src/net/reactor.cpp src/metrics/metrics.cpp)
+# Ensure these are part of the static library
+target_sources(distributed_cache_lib PRIVATE ${NET_SOURCES})
+
+# Integration test for resp over reactor
+add_executable(resp_integration tests/resp_integration_test.cpp)
+target_link_libraries(resp_integration gtest_main distributed_cache_lib)
+add_test(NAME resp_integration COMMAND resp_integration)

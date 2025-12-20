@@ -39,7 +39,7 @@ int main(int argc, char* argv[]) {
     }
 
     if (tcp) {
-        TCPServer tcpServer(8080);
+        TCPServer tcpServer(8080, &cache);
         tcpServer.start();
     } else {
         UDPServer udpServer(8080);

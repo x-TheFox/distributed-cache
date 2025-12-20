@@ -2,9 +2,14 @@
 #define CACHE_H
 
 #include <string>
+#include <string_view>
+#include <vector>
+#include <memory>
 #include <optional>
 #include <mutex>
 #include <chrono>
+#include <atomic>
+#include <functional>
 #include "eviction.h"
 #include "lru.h"
 #include "lfu.h"
@@ -25,9 +30,17 @@ public:
 
 private:
     std::unique_ptr<EvictionPolicyInterface> evictor_;
-    mutable std::mutex mutex_;
-    uint64_t hits_{0};
-    uint64_t misses_{0};
+
+    // Lock striping to reduce contention: vector of mutexes guarded per key
+    std::vector<std::unique_ptr<std::mutex>> stripes_;
+    size_t stripe_count_ = 16; // default
+
+    std::hash<std::string> hasher_;
+
+    std::atomic<uint64_t> hits_{0};
+    std::atomic<uint64_t> misses_{0};
+
+    std::mutex size_mutex_; // used only for size() when necessary
 };
 
 #endif // CACHE_H
