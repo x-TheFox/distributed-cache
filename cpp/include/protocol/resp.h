@@ -2,6 +2,7 @@
 #define RESP_H
 
 #include <string>
+#include <string_view>
 #include <vector>
 #include <optional>
 
@@ -14,11 +15,11 @@ public:
     // On success returns argument vector and sets `consumed` bytes.
     // On incomplete returns std::nullopt (caller should read more data);
     // On parse error returns empty vector (but sets consumed to 0).
-    static std::optional<std::vector<std::string>> parse(const std::string &data, size_t &consumed);
+    static std::optional<std::vector<std::string>> parse(const std::string_view &data, size_t &consumed);
 
 private:
-    static bool parseInteger(const std::string &s, size_t &pos, long long &out);
-    static bool readLine(const std::string &s, size_t &pos, std::string &out);
+    static bool parseInteger(const std::string_view &s, size_t &pos, long long &out);
+    static bool readLine(const std::string_view &s, size_t &pos, std::string &out);
 };
 
 
