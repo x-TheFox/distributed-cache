@@ -1,5 +1,6 @@
 #include "net/reactor.h"
 #include "net/thread_pool.h"
+#include "net/event_poller.h"
 #include "cache/cache.h"
 #include "protocol/resp.h"
 #include "metrics/metrics.h"
@@ -12,6 +13,12 @@
 #include <vector>
 #include <cstring>
 #include <chrono>
+#include <memory>
+
+// platform-specific CreateDefaultPoller factory
+namespace net {
+EventPoller* CreateDefaultPoller();
+}
 
 static int setNonBlocking(int fd) {
     int flags = fcntl(fd, F_GETFL, 0);
@@ -21,6 +28,7 @@ static int setNonBlocking(int fd) {
 
 Reactor::Reactor(int port, Cache *cache, size_t worker_threads) : port_(port), cache_(cache) {
     pool_ = std::make_unique<ThreadPool>(worker_threads);
+    poller_.reset(net::CreateDefaultPoller());
     setupServer();
 }
 
@@ -41,6 +49,7 @@ void Reactor::setupServer() {
     if (bind(server_fd_, (struct sockaddr*)&addr, sizeof(addr)) < 0) { perror("bind"); exit(1); }
     if (listen(server_fd_, 128) < 0) { perror("listen"); exit(1); }
     if (setNonBlocking(server_fd_) < 0) { perror("fcntl"); }
+    if (poller_) poller_->add_fd(server_fd_);
 }
 
 void Reactor::run() {
@@ -49,40 +58,23 @@ void Reactor::run() {
     fds.reserve(256);
     while (running_) {
         fds.clear();
-        struct pollfd srv{};
-        srv.fd = server_fd_;
-        srv.events = POLLIN;
-        fds.push_back(srv);
-
-        // build client fds
-        {
-            std::lock_guard<std::mutex> lock(clients_mutex_);
-            for (auto &p : buffers_) {
-                struct pollfd c{};
-                c.fd = p.first;
-                c.events = POLLIN;
-                fds.push_back(c);
-            }
-        }
-
         int timeout_ms = 100; // check periodically
-        int rc = poll(fds.data(), fds.size(), timeout_ms);
-        if (rc < 0) { if (errno == EINTR) continue; perror("poll"); break; }
-        if (rc == 0) continue;
+        auto events = poller_->wait(timeout_ms);
+        if (events.empty()) continue;
 
-        for (size_t i = 0; i < fds.size(); ++i) {
-            auto &pf = fds[i];
-            if (pf.revents & POLLIN) {
-                if (pf.fd == server_fd_) {
-                    acceptClient();
-                } else {
-                    // schedule read processing
-                    int fd = pf.fd;
-                    pool_->enqueue([this, fd]{ this->handleClientRead(fd); });
-                }
+        for (auto &ev : events) {
+            if (ev.fd == server_fd_) {
+                // new connection(s)
+                acceptClient();
+                continue;
             }
-            if (pf.revents & (POLLHUP | POLLERR | POLLNVAL)) {
-                if (pf.fd != server_fd_) closeClient(pf.fd);
+
+            if (ev.events & POLLIN) {
+                int fd = ev.fd;
+                pool_->enqueue([this, fd]{ this->handleClientRead(fd); });
+            }
+            if (ev.events & (POLLHUP | POLLERR)) {
+                if (ev.fd != server_fd_) closeClient(ev.fd);
             }
         }
     }
@@ -105,6 +97,7 @@ void Reactor::acceptClient() {
             std::lock_guard<std::mutex> lock(clients_mutex_);
             buffers_[cfd] = std::string();
         }
+        if (poller_) poller_->add_fd(cfd);
     }
 }
 
@@ -112,6 +105,7 @@ void Reactor::closeClient(int client_fd) {
     std::lock_guard<std::mutex> lock(clients_mutex_);
     auto it = buffers_.find(client_fd);
     if (it != buffers_.end()) buffers_.erase(it);
+    if (poller_) poller_->remove_fd(client_fd);
     close(client_fd);
 }
 
