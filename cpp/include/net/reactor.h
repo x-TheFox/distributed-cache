@@ -6,6 +6,7 @@
 #include <mutex>
 #include <vector>
 #include <atomic>
+#include <memory>
 #include <sys/types.h>
 
 class ThreadPool;

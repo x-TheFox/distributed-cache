@@ -2,9 +2,14 @@
 #define CACHE_H
 
 #include <string>
+#include <string_view>
+#include <vector>
+#include <memory>
 #include <optional>
 #include <mutex>
 #include <chrono>
+#include <atomic>
+#include <functional>
 #include "eviction.h"
 #include "lru.h"
 #include "lfu.h"
