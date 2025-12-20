@@ -3,6 +3,7 @@
 #include "net/event_poller.h"
 #include <sys/epoll.h>
 #include <unistd.h>
+#include <poll.h>
 #include <stdexcept>
 
 namespace net {
