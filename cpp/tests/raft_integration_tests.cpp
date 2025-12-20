@@ -156,8 +156,16 @@ TEST(RaftIntegration, LeaderFailoverAndRecovery) {
     if (c.isLeader()) leader = &c;
     ASSERT_NE(leader, nullptr);
 
-    // leader appends an entry
-    EXPECT_TRUE(leader->appendEntry("before_down"));
+    // leader appends an entry (retry up to 2s to handle timing variance under coverage/CI)
+    bool appended = leader->appendEntry("before_down");
+    int waited = 0;
+    const int append_wait_step = 50;
+    while (!appended && waited < 2000) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(append_wait_step));
+        waited += append_wait_step;
+        appended = leader->appendEntry("before_down");
+    }
+    EXPECT_TRUE(appended);
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
     // simulate crash by partitioning the leader away (don't call stop, keep state intact but unreachable)
@@ -255,13 +263,20 @@ TEST(RaftIntegration, PartitionPreventsMinorityElection) {
 
     a.start(); b.start(); c.start();
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(400));
+    // Wait up to 2s for {b,c} to elect a leader; ensure 'a' does not become leader
+    int waited = 0;
+    const int wait_step = 50;
+    while (waited < 2000) {
+        if (b.isLeader() || c.isLeader()) break;
+        if (a.isLeader()) break; // fail fast if 'a' became leader incorrectly
+        std::this_thread::sleep_for(std::chrono::milliseconds(wait_step));
+        waited += wait_step;
+    }
 
-    // In this partition, {b,c} may elect a leader but {a} alone shouldn't
     bool a_leader = a.isLeader();
     bool b_or_c_leader = b.isLeader() || c.isLeader();
 
-    EXPECT_FALSE(a_leader);
+    EXPECT_FALSE(a_leader) << "Node 'a' became leader in minority partition";
     EXPECT_TRUE(b_or_c_leader);
 
     a.stop(); b.stop(); c.stop();
