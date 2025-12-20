@@ -2,6 +2,7 @@
 #include "replication/log.h"
 #include <fstream>
 #include <cstdint>
+#include <filesystem>
 
 namespace replication {
 
@@ -27,6 +28,13 @@ std::vector<std::pair<uint64_t, std::string>> WAL::replay() const {
     std::lock_guard<std::mutex> lock(mutex_);
     LOG(LogLevel::DEBUG, "[wal] replay start path=" << path_);
     std::vector<std::pair<uint64_t, std::string>> out;
+    // Existence check for debugging
+    try {
+        bool exists = std::filesystem::exists(path_);
+        std::cerr << "[wal-debug] replay path=" << path_ << " exists=" << exists << std::endl;
+    } catch (...) {
+        std::cerr << "[wal-debug] replay path exists check failed" << std::endl;
+    }
     std::ifstream ifs(path_, std::ios::binary);
     if (!ifs.is_open()) {
         LOG(LogLevel::WARN, "[wal] replay open failed");
@@ -52,15 +60,17 @@ std::vector<std::pair<uint64_t, std::string>> WAL::replay() const {
 bool WAL::truncateHead(size_t count) {
     // Do not hold the mutex while calling replay() which itself locks the mutex (avoid deadlock).
     auto all = replay();
+    LOG(LogLevel::DEBUG, "[wal] truncateHead path=" << path_ << " drop=" << count << " total=" << all.size());
     if (count >= all.size()) {
         // truncate to empty file
         std::ofstream ofs(path_, std::ios::trunc | std::ios::binary);
+        LOG(LogLevel::DEBUG, "[wal] truncateHead truncating to empty file path=" << path_ << " ok=" << ofs.good());
         return ofs.good();
     }
     std::string tmp = path_ + ".tmp";
     {
         std::ofstream ofs(tmp, std::ios::trunc | std::ios::binary);
-        if (!ofs.is_open()) return false;
+        if (!ofs.is_open()) { LOG(LogLevel::ERROR, "[wal] truncateHead failed to open tmp=" << tmp); return false; }
         for (size_t i = count; i < all.size(); ++i) {
             uint64_t term = all[i].first;
             uint32_t len = static_cast<uint32_t>(all[i].second.size());
@@ -70,6 +80,7 @@ bool WAL::truncateHead(size_t count) {
             if (!ofs) {
                 ofs.close();
                 std::remove(tmp.c_str());
+                LOG(LogLevel::ERROR, "[wal] truncateHead write failed tmp=" << tmp);
                 return false;
             }
         }
@@ -77,9 +88,11 @@ bool WAL::truncateHead(size_t count) {
     }
     // atomically replace the original WAL with the temporary
     if (std::rename(tmp.c_str(), path_.c_str()) != 0) {
+        LOG(LogLevel::ERROR, "[wal] truncateHead rename failed tmp=" << tmp << " path=" << path_);
         std::remove(tmp.c_str());
         return false;
     }
+    LOG(LogLevel::DEBUG, "[wal] truncateHead done path=" << path_);
     return true;
 }
 

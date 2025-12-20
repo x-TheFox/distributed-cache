@@ -27,6 +27,7 @@ bool Snapshot::save(const std::string& path) const {
 }
 
 bool Snapshot::load(const std::string& path, Snapshot& out) {
+    std::cerr << "[snapshot-debug] load path=" << path << " exists=" << std::filesystem::exists(path) << std::endl;
     LOG(LogLevel::DEBUG, "[snapshot] load path=" << path);
     std::ifstream ifs(path, std::ios::binary);
     if (!ifs.is_open()) { LOG(LogLevel::WARN, "[snapshot] load open failed"); return false; }

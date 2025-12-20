@@ -82,15 +82,6 @@ public:
     // Helper for tests
     size_t getCommitIndexForTest() const { std::lock_guard<std::mutex> lock(mutex_); return commit_index_; }
 
-public:
-    // Tests and external uses may need to control replication timing
-    void setReplicationIntervalMsPublic(int ms) { setReplicationIntervalMs(ms); }
-    size_t getCommitIndexForTestPublic() const { return getCommitIndexForTest(); }
-
-private:
-    // Internal helper that assumes mutex_ is already held. Removes `count` entries from in-memory log and updates metadata.
-    void compactLogPrefixLocked(size_t count);
-
 private:
     // In-memory log entries (term + data)
     std::vector<Entry> log_;

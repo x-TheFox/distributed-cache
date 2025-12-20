@@ -113,16 +113,34 @@ void RaftNode::start() {
     LOG(LogLevel::DEBUG, "[raft] start node=" << id_);
     bool expected = false;
     if (!running_.compare_exchange_strong(expected, true)) { LOG(LogLevel::WARN, "[raft] start called while already running"); return; }
-    // Load WAL entries on start if present (useful for followers)
-    if (wal_) {
-        LOG(LogLevel::DEBUG, "[wal] replay start on start path set");
-        auto entries = wal_->replay();
-        LOG(LogLevel::DEBUG, "[wal] replay returned entries=" << entries.size());
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (log_.empty()) {
-            for (const auto &p : entries) log_.push_back(Entry{p.first, p.second});
+    // Load snapshot (if exists) and WAL entries on start; replay WAL tail after snapshot
+    Snapshot snap;
+    bool has_snap = false;
+    if (!snapshot_path_.empty()) {
+        if (Snapshot::load(snapshot_path_ + ".snap", snap)) {
+            std::lock_guard<std::mutex> lock(mutex_);
+            last_included_index_ = snap.last_included_index;
+            last_included_term_ = snap.last_included_term;
+            commit_index_ = std::max(commit_index_, last_included_index_);
+            LOG(LogLevel::INFO, "[raft] node=" << id_ << " loaded snapshot index=" << last_included_index_ << " term=" << last_included_term_);
+            has_snap = true;
         }
     }
+
+    if (wal_) {
+        auto entries = wal_->replay();
+        std::cerr << "[wal-debug] replay returned entries=" << entries.size() << std::endl;
+        LOG(LogLevel::DEBUG, "[wal] replay returned entries=" << entries.size());
+        std::lock_guard<std::mutex> lock(mutex_);
+        // The WAL file is already truncated by compaction; replay() returns the WAL tail (entries after snapshot).
+        // Append all returned entries to the in-memory log.
+        for (size_t i = 0; i < entries.size(); ++i) {
+            log_.push_back(Entry{entries[i].first, entries[i].second});
+        }
+        LOG(LogLevel::DEBUG, "[raft] node=" << id_ << " after WAL replay logSize=" << log_.size());
+        for (size_t i=0;i<log_.size();++i) LOG(LogLevel::DEBUG, "[raft] node=" << id_ << " log["<<i<<"]=" << log_[i].data << " term="<<log_[i].term);
+    }
+
     // initialize last append time
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -378,26 +396,10 @@ size_t RaftNode::logSize() const {
     return log_.size();
 }
 
-void RaftNode::compactLogPrefixLocked(size_t count) {
-    // Assumes mutex_ is held
-    if (count == 0) return;
-    if (count > log_.size()) {
-        // If count > log size, just clear
-        last_included_index_ += count;
-        // keep last_included_term_ unchanged if no entries
-        return;
-    }
-    uint64_t last_term = log_[count - 1].term;
-    log_.erase(log_.begin(), log_.begin() + static_cast<ssize_t>(count));
-    last_included_index_ += count;
-    last_included_term_ = last_term;
-}
-
 bool RaftNode::compactLogPrefix(size_t count) {
     if (!wal_) return false;
     if (count == 0) return true;
-
-    // Validate and capture metadata under lock, then call WAL truncate outside the lock
+    // capture term and validate under lock
     uint64_t last_term = 0;
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -406,18 +408,24 @@ bool RaftNode::compactLogPrefix(size_t count) {
     }
 
     LOG(LogLevel::DEBUG, "[raft] compactLogPrefix start node=" << id_ << " drop=" << count);
+
+    // Call WAL truncate without holding Raft mutex to avoid potential deadlocks
     bool ok = wal_->truncateHead(count);
     if (!ok) { LOG(LogLevel::ERROR, "[raft] compactLogPrefix wal truncate failed"); return false; }
 
+    // Now update in-memory log and metadata under lock
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        // double-check and perform in-memory removal
+        // safety check
         if (count > log_.size()) {
+            // nothing to do
             last_included_index_ += count;
             last_included_term_ = last_term;
             return true;
         }
-        compactLogPrefixLocked(count);
+        log_.erase(log_.begin(), log_.begin() + static_cast<ssize_t>(count));
+        last_included_index_ += count;
+        last_included_term_ = last_term;
     }
 
     LOG(LogLevel::DEBUG, "[raft] compactLogPrefix done node=" << id_ << " new_last_included_index=" << last_included_index_);
@@ -493,9 +501,11 @@ bool RaftNode::createSnapshot(const std::string& data) {
     // Gather snapshot metadata under lock, then release before IO and compaction to avoid deadlocks
     Snapshot s;
     size_t to_drop = 0;
+    std::cerr << "[snapshot-debug] before lock" << std::endl;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (!isLeader()) { LOG(LogLevel::WARN, "[raft] createSnapshot node=" << id_ << " not leader"); return false; }
+        std::cerr << "[snapshot-debug] after lock" << std::endl;
+        if (state_ != State::Leader) { LOG(LogLevel::WARN, "[raft] createSnapshot node=" << id_ << " not leader"); return false; }
         if (snapshot_path_.empty()) { LOG(LogLevel::WARN, "[raft] createSnapshot no snapshot_path set"); return false; }
         s.last_included_index = last_included_index_ + log_.size();
         s.last_included_term = log_.empty() ? last_included_term_ : log_.back().term;
@@ -564,45 +574,47 @@ RaftNode::InstallSnapshotResult RaftNode::handleInstallSnapshot(uint64_t term, c
     if (snapshot.last_included_index > last_included_index_) {
         size_t drop = snapshot.last_included_index - last_included_index_;
         if (drop <= log_.size()) {
-            // To avoid locking re-entrancy issues, perform WAL truncate outside mutex, then update in-memory under lock
-            // Capture necessary metadata
-            uint64_t last_term = 0;
-            {
-                // mutex_ already held here
-                last_term = log_[drop - 1].term;
-            }
-            // perform wal truncate outside lock
+            // We are currently holding the Raft mutex; avoid calling compactLogPrefix() which would re-lock.
+            // Capture the last term for the dropped range while locked, then release lock to truncate WAL, then re-acquire to update in-memory log.
+            uint64_t drop_last_term = log_[drop - 1].term;
+            // Truncate WAL outside lock
             if (wal_) {
-                if (!wal_->truncateHead(drop)) {
-                    LOG(LogLevel::ERROR, "[raft] node=" << id_ << " wal truncate failed during install snapshot");
+                bool ok = wal_->truncateHead(drop);
+                if (!ok) {
+                    LOG(LogLevel::ERROR, "[raft] node=" << id_ << " wal truncateHead failed during install snapshot");
                     res.success = false;
                     res.term = current_term_;
                     return res;
                 }
             }
-            // update in-memory log under lock
+            // Now update in-memory log and metadata under lock
             {
-                std::lock_guard<std::mutex> lg(mutex_);
-                compactLogPrefixLocked(drop);
+                // we already have the lock here; perform erase
+                if (drop <= log_.size()) {
+                    log_.erase(log_.begin(), log_.begin() + static_cast<ssize_t>(drop));
+                } else {
+                    log_.clear();
+                }
+                last_included_index_ += drop;
+                last_included_term_ = drop_last_term;
             }
         } else {
             // follower doesn't have enough local entries: clear all
             size_t local = log_.size();
-            // perform wal truncate outside lock
+            // release in-memory entries under lock first
+            log_.clear();
+            // Truncate entire WAL without holding lock
             if (wal_) {
                 if (!wal_->truncateHead(local)) {
-                    LOG(LogLevel::ERROR, "[raft] node=" << id_ << " wal truncate failed during install snapshot (clear all)");
+                    LOG(LogLevel::ERROR, "[raft] node=" << id_ << " wal truncateHead failed during full install snapshot");
                     res.success = false;
                     res.term = current_term_;
                     return res;
                 }
             }
-            {
-                std::lock_guard<std::mutex> lg(mutex_);
-                log_.clear();
-                last_included_index_ = snapshot.last_included_index;
-                last_included_term_ = snapshot.last_included_term;
-            }
+            // update metadata
+            last_included_index_ = snapshot.last_included_index;
+            last_included_term_ = snapshot.last_included_term;
         }
     }
 

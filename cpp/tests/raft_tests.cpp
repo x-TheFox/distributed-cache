@@ -96,7 +96,7 @@ TEST(Raft, TwoNodeDeterministicElection) {
 
         leader.setElectionTimeoutMs(30);
         follower.setElectionTimeoutMs(150);
-        leader.setReplicationIntervalMsPublic(10);
+        leader.setReplicationIntervalMs(10);
 
         leader.start(); follower.start();
 
