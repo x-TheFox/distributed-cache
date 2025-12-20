@@ -8,9 +8,13 @@
 #include <unistd.h>
 #include <cstring>
 
+#include "cache/cache.h"
+#include "protocol/resp.h"
+
 class TCPServer {
 public:
-    TCPServer(int port) : port(port), server_fd(-1) {
+    // Accept a pointer to the canonical Cache instance
+    TCPServer(int port, Cache *cache) : port(port), server_fd(-1), cache_(cache) {
         setupServer();
     }
 
@@ -27,6 +31,7 @@ public:
 private:
     int port;
     int server_fd;
+    Cache *cache_;
 
     void setupServer() {
         server_fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -47,7 +52,7 @@ private:
             exit(EXIT_FAILURE);
         }
 
-        if (listen(server_fd, 3) < 0) {
+        if (listen(server_fd, 128) < 0) {
             perror("Listen failed");
             close(server_fd);
             exit(EXIT_FAILURE);
@@ -66,13 +71,28 @@ private:
     }
 
     void handleClient(int client_fd) {
-        char buffer[1024] = {0};
-        int bytes_read = read(client_fd, buffer, sizeof(buffer));
-        if (bytes_read > 0) {
-            std::cout << "Received: " << buffer << std::endl;
-            // Process the request and send a response
-            send(client_fd, buffer, bytes_read, 0);
+        std::string buf;
+        buf.reserve(4096);
+        char tmp[1024];
+        ssize_t n;
+        // Read once for simplicity; the RESP parser supports incomplete messages
+        n = read(client_fd, tmp, sizeof(tmp));
+        if (n <= 0) { close(client_fd); return; }
+        buf.append(tmp, (size_t)n);
+
+        size_t consumed = 0;
+        auto parsed = RespParser::parse(buf, consumed);
+        if (!parsed.has_value()) {
+            // incomplete or malformed
+            std::string resp = "-ERR incomplete or invalid request\r\n";
+            send(client_fd, resp.data(), resp.size(), 0);
+            close(client_fd);
+            return;
         }
+
+        RespProtocol proto(cache_);
+        std::string reply = proto.process(parsed.value());
+        send(client_fd, reply.data(), reply.size(), 0);
         close(client_fd);
     }
 };
