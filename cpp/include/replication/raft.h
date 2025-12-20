@@ -9,6 +9,7 @@
 #include <chrono>
 #include <functional>
 #include <unordered_map>
+#include <condition_variable>
 #include "replication/snapshot.h"
 
 namespace replication {
