@@ -50,11 +50,26 @@ docker-compose.override.yml
 *.tar.gz
 *.tgz
 
-# Coverage
+# Coverage and profiling
 coverage/
+*.gcda
+*.gcno
+*.profdata
+lcov.info
+*.info
 
 # Other
 .env
+
+# Build directories (include coverage build outputs)
+/cpp/build/
+/cpp/build-coverage/
+/cpp/build*/
+
+# CTest/CMake test artifacts
+Testing/
+CTestTestfile.cmake
+Test.xml
 
 # Ignore generated files and folders under repo root
 cpp/build/
