@@ -54,13 +54,17 @@ try:
 
     # start threads to stream logs from both servers
     import threading
-    def stream_out(name, pipe):
+    ready_event = threading.Event()
+    def stream_out(name, pipe, ready_event=None):
         for line in iter(pipe.readline, ''):
-            print(f"[{name}] {line.rstrip()}")
-    t1 = threading.Thread(target=stream_out, args=("nodeA", proc_a.stdout), daemon=True)
-    t2 = threading.Thread(target=stream_out, args=("nodeA-err", proc_a.stderr), daemon=True)
-    t3 = threading.Thread(target=stream_out, args=("nodeB", proc_b.stdout), daemon=True)
-    t4 = threading.Thread(target=stream_out, args=("nodeB-err", proc_b.stderr), daemon=True)
+            sline = line.rstrip()
+            print(f"[{name}] {sline}")
+            if ready_event is not None and "[server] READY AND ROUTING" in sline:
+                ready_event.set()
+    t1 = threading.Thread(target=stream_out, args=("nodeA", proc_a.stdout, None), daemon=True)
+    t2 = threading.Thread(target=stream_out, args=("nodeA-err", proc_a.stderr, ready_event), daemon=True)
+    t3 = threading.Thread(target=stream_out, args=("nodeB", proc_b.stdout, None), daemon=True)
+    t4 = threading.Thread(target=stream_out, args=("nodeB-err", proc_b.stderr, None), daemon=True)
     t1.start(); t2.start(); t3.start(); t4.start();
 
     # allow servers to fully initialize
@@ -108,39 +112,43 @@ try:
         # Ensure Node A is still running before issuing the SET
         if proc_a.poll() is not None:
             print(f"Node A has exited unexpectedly with code {proc_a.returncode}")
-            # drain any remaining stderr
             try:
                 print('nodeA stderr:', proc_a.stderr.read())
             except Exception:
                 pass
             sys.exit(5)
-        # Issue SET to Node A and expect a MOVED
+
+        # Wait for server readiness marker from Node A stderr
+        print('Waiting up to 5s for Node A READY marker...')
+        if not ready_event.wait(timeout=5.0):
+            print('Node A did not signal READY; aborting')
+            sys.exit(6)
+
+        # As a quick health check, PING Node A first to ensure it responds
+        pingreq = "*1\r\n$4\r\nPING\r\n"
+        ok, pong = send_recv_raw('127.0.0.1', NODE_A_PORT, pingreq, connect_timeout=0.5, read_timeout=0.5)
+        print('PING response:', pong)
+        if not ok or not pong or '+PONG' not in pong:
+            print('Node A did not reply to PING; aborting')
+            sys.exit(7)
+
+        # Issue SET to Node A and expect a MOVED (no retry loops)
         setreq = f"*3\r\n$3\r\nSET\r\n${len(target_key)}\r\n{target_key}\r\n$1\r\nv\r\n"
         success, resp = send_recv_raw('127.0.0.1', NODE_A_PORT, setreq, connect_timeout=0.5, read_timeout=0.5)
         if not success or not resp:
-            # Retry a few times before failing to tolerate transient conditions
-            retry_ok = False
-            for attempt in range(5):
-                time.sleep(0.1)
-                success, resp = send_recv_raw('127.0.0.1', NODE_A_PORT, setreq, connect_timeout=0.5, read_timeout=0.5)
-                if success and resp:
-                    retry_ok = True
-                    break
-            if not retry_ok:
-                print("No response from Node A when setting deterministic key after retries")
-                # attempt to read any available stderr without blocking
-                try:
-                    import select
-                    fd = proc_a.stderr.fileno()
-                    r,_,_ = select.select([fd], [], [], 0.1)
-                    if r:
-                        partial = proc_a.stderr.read(4096)
-                        print('nodeA stderr (partial):', partial)
-                    else:
-                        print('nodeA stderr: <no data available>')
-                except Exception as e:
-                    print('nodeA stderr read failed:', e)
-                sys.exit(3)
+            print("No response from Node A when setting deterministic key (no retries)")
+            try:
+                import select
+                fd = proc_a.stderr.fileno()
+                r,_,_ = select.select([fd], [], [], 0.1)
+                if r:
+                    partial = proc_a.stderr.read(4096)
+                    print('nodeA stderr (partial):', partial)
+                else:
+                    print('nodeA stderr: <no data available>')
+            except Exception as e:
+                print('nodeA stderr read failed:', e)
+            sys.exit(3)
         print("Response from Node A:", resp.strip())
         m = MOVED_RE.search(resp)
         if not m:

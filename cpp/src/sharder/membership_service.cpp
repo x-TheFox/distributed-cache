@@ -24,7 +24,7 @@ void MembershipService::LoadSeedList(const std::vector<std::string> &seeds) {
     for (const auto &s : seeds) {
         std::string ip; int port;
         if (!parse_ip_port(s, ip, port)) {
-            LOG(LogLevel::WARN, "[membership] invalid seed entry '" << s << "'");
+            LOG(replication::LogLevel::WARN, "[membership] invalid seed entry '" << s << "'");
             continue;
         }
         std::string node_id = ip + ":" + std::to_string(port);

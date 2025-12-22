@@ -142,6 +142,10 @@ void Reactor::handleClientRead(int client_fd) {
             buffer = it->second;
         }
 
+        // log a short snippet of buffer for debugging
+        std::string snippet = buffer.substr(0, 120);
+        LOG(replication::LogLevel::DEBUG, "[reactor] fd=" << client_fd << " buffer_snippet='" << snippet << "'");
+
         size_t consumed = 0;
         auto msgs = RespParser::parse_many(std::string_view(buffer), consumed);
 
@@ -153,6 +157,7 @@ void Reactor::handleClientRead(int client_fd) {
             } else {
                 // parse error: respond and close
                 std::string err = "-ERR malformed request\r\n";
+                LOG(replication::LogLevel::WARN, "[reactor] parse error fd=" << client_fd << "; sending MALFORMED and closing");
                 send(client_fd, err.data(), err.size(), 0);
                 closeClient(client_fd);
                 return;
@@ -168,7 +173,12 @@ void Reactor::handleClientRead(int client_fd) {
         auto us = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
         Metrics::instance().record_latency_us((uint64_t)us);
 
-        if (!out.empty()) send(client_fd, out.data(), out.size(), 0);
+        if (!out.empty()) {
+            LOG(replication::LogLevel::DEBUG, "[reactor] fd=" << client_fd << " sending_reply='" << out.substr(0,120) << "'");
+            send(client_fd, out.data(), out.size(), 0);
+        }
+
+        LOG(replication::LogLevel::DEBUG, "[reactor] fd=" << client_fd << " consumed=" << consumed << " msgs=" << msgs.size());
 
         // remove consumed bytes from buffer
         {

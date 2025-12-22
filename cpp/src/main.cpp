@@ -55,6 +55,16 @@ int main(int argc, char* argv[]) {
         if (envs == "lfu") policy = EvictionPolicyType::LFU;
     }
 
+    // Optional debug log level via env var LOG_LEVEL=DEBUG|INFO|WARN|ERROR
+    const char* ll = std::getenv("LOG_LEVEL");
+    if (ll) {
+        std::string lvl(ll);
+        if (lvl == "DEBUG") replication::setLogLevel(replication::LogLevel::DEBUG);
+        else if (lvl == "INFO") replication::setLogLevel(replication::LogLevel::INFO);
+        else if (lvl == "WARN") replication::setLogLevel(replication::LogLevel::WARN);
+        else if (lvl == "ERROR") replication::setLogLevel(replication::LogLevel::ERROR);
+    }
+
     // Initialize the cache system with a default capacity and selected policy
     Cache cache(1024, policy);
 
@@ -105,6 +115,9 @@ int main(int argc, char* argv[]) {
     LOG(replication::LogLevel::INFO, "starting server node=" << local.id << " port=" << port);
     TCPServer tcpServer(port, &cache);
     tcpServer.start();
+
+    // Signal readiness (membership/routing initialized and server listening) so demos/tests can wait on it
+    LOG(replication::LogLevel::INFO, "[server] READY AND ROUTING");
 
     return 0;
 }
