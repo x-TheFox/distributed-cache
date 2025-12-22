@@ -6,7 +6,7 @@ MembershipService::MembershipService(const LocalNodeInfo &local, size_t virtual_
     : local_(local), ring_(virtual_nodes) {
     // build initial router from empty ring
     auto r = std::make_shared<Router>(ring_, local_);
-    router_.store(r);
+    std::atomic_store(&router_, r);
     Router::set_default(r);
 }
 
@@ -52,13 +52,13 @@ void MembershipService::rebuildRouterAndSwap() {
     for (const auto &kv : addr_map_) {
         new_router->add_node_address(kv.first, kv.second.first, kv.second.second);
     }
-    router_.store(new_router);
+    std::atomic_store(&router_, new_router);
     // Also update global default router so existing code paths pick it up
     Router::set_default(new_router);
 }
 
 std::shared_ptr<Router> MembershipService::getRouter() const {
-    return router_.load();
+    return std::atomic_load(&router_);
 }
 
 std::vector<std::string> MembershipService::nodes() const {

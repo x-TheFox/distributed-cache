@@ -32,7 +32,7 @@ private:
     mutable std::mutex mutex_;
     ConsistentHash ring_;
     std::map<std::string, std::pair<std::string,int>> addr_map_; // node_id -> (ip,port)
-    std::atomic<std::shared_ptr<Router>> router_;
+    std::shared_ptr<Router> router_;
 };
 
 #endif // MEMBERSHIP_SERVICE_H

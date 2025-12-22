@@ -3,6 +3,7 @@
 #include <cstdint>
 
 std::shared_ptr<Router> Router::default_router_ = nullptr;
+#include <atomic>
 
 Router::Router(const ConsistentHash &ring, const LocalNodeInfo &local) : ring_(ring), local_(local) {
     // Ensure local node is present in ring
@@ -39,9 +40,9 @@ Router::Route Router::lookup(const std::string &key) const {
 }
 
 void Router::set_default(std::shared_ptr<Router> r) {
-    default_router_ = r;
+    std::atomic_store(&default_router_, r);
 }
 
 std::shared_ptr<Router> Router::get_default() {
-    return default_router_;
+    return std::atomic_load(&default_router_);
 }
