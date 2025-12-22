@@ -241,15 +241,16 @@ void RaftNode::start() {
                         }
 
                         if (res.success) {
-                            // update match and next indices
+                            // update match and next indices; next_index should be the index of the next entry to send
                             std::lock_guard<std::mutex> lg(mutex_);
                             if (!entries.empty()) {
                                 match_index_[p] = res.match_index;
-                                next_index_[p] = match_index_[p];
+                                // next index is match_index + 1, but do not exceed leader's log size
+                                next_index_[p] = std::min(match_index_[p] + 1, log_.size());
                             } else {
-                                // heartbeat, leader's match index remains unchanged except set to log_.size()
-                                match_index_[p] = std::max(match_index_[p], log_.size());
-                                next_index_[p] = std::max(next_index_[p], match_index_[p]);
+                                // heartbeat: update known match index and set next_index accordingly
+                                match_index_[p] = std::max(match_index_[p], res.match_index);
+                                next_index_[p] = std::min(match_index_[p] + 1, log_.size());
                             }
                             successes++;
                         } else {
