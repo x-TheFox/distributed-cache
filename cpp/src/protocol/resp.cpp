@@ -1,5 +1,6 @@
 #include "protocol/resp.h"
 #include "cache/cache.h"
+#include "sharder/router.h"
 #include <sstream>
 #include <cstdlib>
 
@@ -111,15 +112,41 @@ string RespProtocol::process(const vector<string> &args) {
         return simpleString("PONG");
     } else if (cmd == "GET") {
         if (args.size() != 2) return errReply("ERR wrong number of arguments for 'get'");
+        // If a Router is configured, validate ownership
+        auto router = Router::get_default();
+        if (router) {
+            auto r = router->lookup(args[1]);
+            if (r.type == Router::RouteType::REMOTE) {
+                // Return MOVED response: -MOVED <slot> <ip>:<port>\r\n
+                std::string moved = "-MOVED " + std::to_string(r.slot) + " " + r.ip + ":" + std::to_string(r.port) + "\r\n";
+                return moved;
+            }
+        }
         auto v = cache_->get(args[1]);
         if (!v.has_value()) return nullBulk();
         return bulkString(v.value());
     } else if (cmd == "SET") {
         if (args.size() != 3) return errReply("ERR wrong number of arguments for 'set'");
+        auto router = Router::get_default();
+        if (router) {
+            auto r = router->lookup(args[1]);
+            if (r.type == Router::RouteType::REMOTE) {
+                std::string moved = "-MOVED " + std::to_string(r.slot) + " " + r.ip + ":" + std::to_string(r.port) + "\r\n";
+                return moved;
+            }
+        }
         cache_->put(args[1], args[2]);
         return simpleString("OK");
     } else if (cmd == "DEL") {
         if (args.size() != 2) return errReply("ERR wrong number of arguments for 'del'");
+        auto router = Router::get_default();
+        if (router) {
+            auto r = router->lookup(args[1]);
+            if (r.type == Router::RouteType::REMOTE) {
+                std::string moved = "-MOVED " + std::to_string(r.slot) + " " + r.ip + ":" + std::to_string(r.port) + "\r\n";
+                return moved;
+            }
+        }
         bool removed = cache_->remove(args[1]);
         return integerReply(removed ? 1 : 0);
     }

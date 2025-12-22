@@ -61,6 +61,10 @@ add_executable(resp_pipelining tests/resp_pipelining_tests.cpp)
 target_link_libraries(resp_pipelining gtest_main distributed_cache_lib)
 add_test(NAME resp_pipelining COMMAND resp_pipelining)
 
+add_executable(resp_router tests/resp_router_tests.cpp)
+target_link_libraries(resp_router gtest_main distributed_cache_lib)
+add_test(NAME resp_router COMMAND resp_router)
+
 add_executable(rebalancer_more_tests tests/sharder_rebalance_more_tests.cpp)
 target_link_libraries(rebalancer_more_tests gtest_main distributed_cache_lib)
 add_test(NAME rebalancer_more_tests COMMAND rebalancer_more_tests)
