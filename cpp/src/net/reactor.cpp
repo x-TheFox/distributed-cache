@@ -110,61 +110,72 @@ void Reactor::closeClient(int client_fd) {
 }
 
 void Reactor::handleClientRead(int client_fd) {
-    char tmp[4096];
-    ssize_t n = read(client_fd, tmp, sizeof(tmp));
-    if (n < 0) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            // no data right now; do not close
-            return;
-        }
-        closeClient(client_fd); return;
-    }
-    if (n == 0) { closeClient(client_fd); return; }
-    {
-        std::lock_guard<std::mutex> lock(clients_mutex_);
-        buffers_[client_fd].append(tmp, (size_t)n);
-    }
-
-    // try to parse one message
-    std::string buffer;
-    {
-        std::lock_guard<std::mutex> lock(clients_mutex_);
-        buffer = buffers_[client_fd];
-    }
-
-    size_t consumed = 0;
-    auto parsed = RespParser::parse(std::string_view(buffer), consumed);
-    if (!parsed.has_value()) {
-        // need more data or invalid: if invalid respond with error and close
-        // We detect malformed by returning empty vector
-        // if parse returned nullopt -> incomplete
-        if (consumed == 0) {
-            // incomplete, wait for more
-            return;
-        } else {
-            std::string err = "-ERR malformed request\r\n";
-            send(client_fd, err.data(), err.size(), 0);
+    // Drain socket until EAGAIN/EWOULDBLOCK (edge-triggered behavior)
+    while (true) {
+        char tmp[4096];
+        ssize_t n = read(client_fd, tmp, sizeof(tmp));
+        if (n < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                // drained for now
+                break;
+            }
             closeClient(client_fd);
             return;
         }
+        if (n == 0) { closeClient(client_fd); return; }
+        {
+            std::lock_guard<std::mutex> lock(clients_mutex_);
+            buffers_[client_fd].append(tmp, (size_t)n);
+        }
     }
 
-    // measure start time
-    auto start = std::chrono::steady_clock::now();
-    RespProtocol proto(cache_);
-    std::string reply = proto.process(parsed.value());
-    auto end = std::chrono::steady_clock::now();
-    auto us = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
-    Metrics::instance().record_latency_us((uint64_t)us);
+    // Process as many complete RESP messages as possible (support pipelining)
+    while (true) {
+        std::string buffer;
+        {
+            std::lock_guard<std::mutex> lock(clients_mutex_);
+            auto it = buffers_.find(client_fd);
+            if (it == buffers_.end()) return; // client closed concurrently
+            buffer = it->second;
+        }
 
-    // send reply
-    send(client_fd, reply.data(), reply.size(), 0);
+        size_t consumed = 0;
+        auto msgs = RespParser::parse_many(std::string_view(buffer), consumed);
 
-    // remove consumed bytes from buffer
-    {
-        std::lock_guard<std::mutex> lock(clients_mutex_);
-        if (consumed <= buffers_[client_fd].size()) {
-            buffers_[client_fd].erase(0, consumed);
-        } else buffers_[client_fd].clear();
+        if (msgs.empty()) {
+            // No complete messages parsed
+            if (consumed == 0) {
+                // incomplete, wait for more data
+                break;
+            } else {
+                // parse error: respond and close
+                std::string err = "-ERR malformed request\r\n";
+                send(client_fd, err.data(), err.size(), 0);
+                closeClient(client_fd);
+                return;
+            }
+        }
+
+        // process each parsed message and aggregate replies
+        RespProtocol proto(cache_);
+        std::string out;
+        auto start = std::chrono::steady_clock::now();
+        for (const auto &m : msgs) out += proto.process(m);
+        auto end = std::chrono::steady_clock::now();
+        auto us = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+        Metrics::instance().record_latency_us((uint64_t)us);
+
+        if (!out.empty()) send(client_fd, out.data(), out.size(), 0);
+
+        // remove consumed bytes from buffer
+        {
+            std::lock_guard<std::mutex> lock(clients_mutex_);
+            auto &buf = buffers_[client_fd];
+            if (consumed <= buf.size()) buf.erase(0, consumed);
+            else buf.clear();
+        }
+
+        // If less data remains than required for a further message, stop
+        if (consumed == 0) break;
     }
 }

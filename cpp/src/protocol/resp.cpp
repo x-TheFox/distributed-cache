@@ -68,6 +68,37 @@ static string nullBulk() { return "$-1\r\n"; }
 static string integerReply(long long i) { return ":" + to_string(i) + "\r\n"; }
 static string errReply(const string &e) { return "-" + e + "\r\n"; }
 
+// Parse as many messages as possible; returns vector of parsed messages and sets consumed to total bytes consumed
+std::vector<std::vector<std::string>> RespParser::parse_many(const std::string_view &data, size_t &consumed) {
+    consumed = 0;
+    size_t pos = 0;
+    std::vector<std::vector<std::string>> out;
+    while (pos < data.size()) {
+        size_t c = 0;
+        auto parsed = RespParser::parse(std::string_view(data.data() + pos, data.size() - pos), c);
+        if (!parsed.has_value()) {
+            // incomplete; stop and report bytes consumed so far
+            break;
+        }
+        // protocol error -> parsed.value() is empty vector
+        if (parsed.value().empty()) {
+            // If we are at the beginning, signal a protocol error by leaving out empty and consumed==0
+            if (pos == 0) {
+                consumed = 0;
+                out.clear();
+                return out;
+            }
+            // otherwise, return what we have so far and leave the remaining bytes for read
+            consumed = pos;
+            return out;
+        }
+        out.push_back(parsed.value());
+        pos += c;
+    }
+    consumed = pos;
+    return out;
+}
+
 RespProtocol::RespProtocol(Cache *cache) : cache_(cache) {}
 
 string RespProtocol::process(const vector<string> &args) {

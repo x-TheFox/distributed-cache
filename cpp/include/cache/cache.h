@@ -7,6 +7,7 @@
 #include <memory>
 #include <optional>
 #include <mutex>
+#include <shared_mutex>
 #include <chrono>
 #include <atomic>
 #include <functional>
@@ -31,8 +32,8 @@ public:
 private:
     std::unique_ptr<EvictionPolicyInterface> evictor_;
 
-    // Lock striping to reduce contention: vector of mutexes guarded per key
-    std::vector<std::unique_ptr<std::mutex>> stripes_;
+    // Lock striping to reduce contention: vector of shared_mutexes (shared for reads)
+    std::vector<std::unique_ptr<std::shared_mutex>> stripes_;
     size_t stripe_count_ = 16; // default
 
     std::hash<std::string> hasher_;
