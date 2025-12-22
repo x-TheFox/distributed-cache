@@ -33,6 +33,8 @@ Router::Route Router::lookup(const std::string &key) const {
         port = it->second.second;
     }
     // compute a simple slot as hash mod 16384
+    // TODO: For Redis Cluster compatibility, consider replacing this with CRC16(key) % 16384
+    // which is the standard used by Redis to compute cluster slots.
     uint64_t h = static_cast<uint64_t>(std::hash<std::string>{}(key));
     uint64_t slot = h % 16384;
 
