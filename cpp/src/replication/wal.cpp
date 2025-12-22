@@ -31,9 +31,9 @@ std::vector<std::pair<uint64_t, std::string>> WAL::replay() const {
     // Existence check for debugging
     try {
         bool exists = std::filesystem::exists(path_);
-        std::cerr << "[wal-debug] replay path=" << path_ << " exists=" << exists << std::endl;
+        LOG(LogLevel::DEBUG, "[wal] replay path=" << path_ << " exists=" << exists);
     } catch (...) {
-        std::cerr << "[wal-debug] replay path exists check failed" << std::endl;
+        LOG(LogLevel::DEBUG, "[wal] replay path exists check failed");
     }
     std::ifstream ifs(path_, std::ios::binary);
     if (!ifs.is_open()) {
