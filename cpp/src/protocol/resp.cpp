@@ -108,12 +108,14 @@ string RespProtocol::process(const vector<string> &args) {
     // make uppercase
     for (auto &c : cmd) c = toupper((unsigned char)c);
 
+    // Capture the router once for the duration of processing this request
+    auto router = Router::get_default();
+
     if (cmd == "PING") {
         return simpleString("PONG");
     } else if (cmd == "GET") {
         if (args.size() != 2) return errReply("ERR wrong number of arguments for 'get'");
         // If a Router is configured, validate ownership
-        auto router = Router::get_default();
         if (router) {
             auto r = router->lookup(args[1]);
             if (r.type == Router::RouteType::REMOTE) {
@@ -127,7 +129,6 @@ string RespProtocol::process(const vector<string> &args) {
         return bulkString(v.value());
     } else if (cmd == "SET") {
         if (args.size() != 3) return errReply("ERR wrong number of arguments for 'set'");
-        auto router = Router::get_default();
         if (router) {
             auto r = router->lookup(args[1]);
             if (r.type == Router::RouteType::REMOTE) {
@@ -139,7 +140,6 @@ string RespProtocol::process(const vector<string> &args) {
         return simpleString("OK");
     } else if (cmd == "DEL") {
         if (args.size() != 2) return errReply("ERR wrong number of arguments for 'del'");
-        auto router = Router::get_default();
         if (router) {
             auto r = router->lookup(args[1]);
             if (r.type == Router::RouteType::REMOTE) {

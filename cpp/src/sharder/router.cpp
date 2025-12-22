@@ -3,6 +3,7 @@
 #include <cstdint>
 
 std::shared_ptr<Router> Router::default_router_ = nullptr;
+#include <atomic>
 
 Router::Router(const ConsistentHash &ring, const LocalNodeInfo &local) : ring_(ring), local_(local) {
     // Ensure local node is present in ring
@@ -32,6 +33,8 @@ Router::Route Router::lookup(const std::string &key) const {
         port = it->second.second;
     }
     // compute a simple slot as hash mod 16384
+    // TODO: For Redis Cluster compatibility, consider replacing this with CRC16(key) % 16384
+    // which is the standard used by Redis to compute cluster slots.
     uint64_t h = static_cast<uint64_t>(std::hash<std::string>{}(key));
     uint64_t slot = h % 16384;
 
@@ -39,9 +42,9 @@ Router::Route Router::lookup(const std::string &key) const {
 }
 
 void Router::set_default(std::shared_ptr<Router> r) {
-    default_router_ = r;
+    std::atomic_store(&default_router_, r);
 }
 
 std::shared_ptr<Router> Router::get_default() {
-    return default_router_;
+    return std::atomic_load(&default_router_);
 }

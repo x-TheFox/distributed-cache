@@ -65,6 +65,16 @@ add_executable(resp_router tests/resp_router_tests.cpp)
 target_link_libraries(resp_router gtest_main distributed_cache_lib)
 add_test(NAME resp_router COMMAND resp_router)
 
+# Membership redirection integration test: verifies that MembershipService drives Router::set_default()
+# and that RESP requests to a non-owner return a Redis-style -MOVED <slot> <ip>:<port>\r\n response.
+add_executable(membership_redirection tests/membership_redirection_test.cpp)
+target_link_libraries(membership_redirection gtest_main distributed_cache_lib)
+add_test(NAME membership_redirection COMMAND membership_redirection)
+
+add_executable(router_concurrency tests/router_concurrency_test.cpp)
+target_link_libraries(router_concurrency gtest_main distributed_cache_lib)
+add_test(NAME router_concurrency COMMAND router_concurrency)
+
 add_executable(rebalancer_more_tests tests/sharder_rebalance_more_tests.cpp)
 target_link_libraries(rebalancer_more_tests gtest_main distributed_cache_lib)
 add_test(NAME rebalancer_more_tests COMMAND rebalancer_more_tests)
