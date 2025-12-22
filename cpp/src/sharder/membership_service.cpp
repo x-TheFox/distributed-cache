@@ -1,6 +1,6 @@
 #include "sharder/membership_service.h"
 #include <sstream>
-#include <iostream>
+#include "replication/log.h"
 
 MembershipService::MembershipService(const LocalNodeInfo &local, size_t virtual_nodes)
     : local_(local), ring_(virtual_nodes) {
@@ -24,7 +24,7 @@ void MembershipService::LoadSeedList(const std::vector<std::string> &seeds) {
     for (const auto &s : seeds) {
         std::string ip; int port;
         if (!parse_ip_port(s, ip, port)) {
-            std::cerr << "MembershipService: invalid seed entry '" << s << "'\n";
+            LOG(replication::LogLevel::WARN, "[membership] invalid seed entry '" << s << "'");
             continue;
         }
         std::string node_id = ip + ":" + std::to_string(port);

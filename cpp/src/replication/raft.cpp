@@ -129,7 +129,6 @@ void RaftNode::start() {
 
     if (wal_) {
         auto entries = wal_->replay();
-        std::cerr << "[wal-debug] replay returned entries=" << entries.size() << std::endl;
         LOG(LogLevel::DEBUG, "[wal] replay returned entries=" << entries.size());
         std::lock_guard<std::mutex> lock(mutex_);
         // The WAL file is already truncated by compaction; replay() returns the WAL tail (entries after snapshot).
@@ -197,7 +196,7 @@ void RaftNode::start() {
                                 } catch (...) { sres.success = false; sres.term = 0; }
                                 if (sres.term > current_term_) {
                                     std::lock_guard<std::mutex> lg(mutex_);
-                                    std::cerr << "[raft] leader=" << id_ << " observed higher term " << sres.term << " from " << p << ", stepping down\n";
+                                    LOG(LogLevel::WARN, "[raft] leader=" << id_ << " observed higher term " << sres.term << " from " << p << ", stepping down");
                                     current_term_ = sres.term;
                                     state_ = State::Follower;
                                     break;
@@ -233,7 +232,7 @@ void RaftNode::start() {
                         if (res.term > current_term_) {
                             // follower has higher term -> step down
                             std::lock_guard<std::mutex> lg(mutex_);
-                            std::cerr << "[raft] leader=" << id_ << " observed higher term " << res.term << " from " << p << ", stepping down\n";
+                            LOG(LogLevel::WARN, "[raft] leader=" << id_ << " observed higher term " << res.term << " from " << p << ", stepping down");
                             current_term_ = res.term;
                             state_ = State::Follower;
                             // stop trying to replicate for now
@@ -301,7 +300,7 @@ void RaftNode::start() {
                         consecutive_failed_replication_rounds_++;
                         if (consecutive_failed_replication_rounds_ >= max_consecutive_failed_rounds_before_stepdown_) {
                             std::lock_guard<std::mutex> lg(mutex_);
-                            std::cerr << "[raft] leader=" << id_ << " unable to reach majority for " << consecutive_failed_replication_rounds_ << " rounds; stepping down\n";
+                            LOG(LogLevel::WARN, "[raft] leader=" << id_ << " unable to reach majority for " << consecutive_failed_replication_rounds_ << " rounds; stepping down");
                             state_ = State::Follower;
                             // reset counter
                             consecutive_failed_replication_rounds_ = 0;
@@ -329,7 +328,7 @@ RaftNode::AppendEntriesResult RaftNode::handleAppendEntries(uint64_t term, const
     LOG(LogLevel::DEBUG, "[raft] node=" << id_ << " recv AppendEntries term=" << term << " my_term=" << current_term_ << " leader=" << leader_id << " prev_log_index=" << prev_log_index << " prev_log_term=" << prev_log_term << " entries=" << entries.size());
     AppendEntriesResult res{false, current_term_, log_.size(), 0, 0};
     if (term < current_term_) {
-        std::cerr << "[raft] node=" << id_ << " rejecting AppendEntries due to stale term\n";
+        LOG(LogLevel::WARN, "[raft] node=" << id_ << " rejecting AppendEntries due to stale term");
         res.success = false;
         res.term = current_term_;
         res.match_index = log_.size();
@@ -338,7 +337,7 @@ RaftNode::AppendEntriesResult RaftNode::handleAppendEntries(uint64_t term, const
         return res;
     }
     if (term > current_term_) {
-        std::cerr << "[raft] node=" << id_ << " updating term from " << current_term_ << " to " << term << " and becoming follower\n";
+        LOG(LogLevel::INFO, "[raft] node=" << id_ << " updating term from " << current_term_ << " to " << term << " and becoming follower");
         current_term_ = term;
         state_ = State::Follower;
     }
@@ -352,7 +351,7 @@ RaftNode::AppendEntriesResult RaftNode::handleAppendEntries(uint64_t term, const
             // indicate missing entries: conflict_term == 0, conflict_index = current log size
             res.conflict_term = 0;
             res.conflict_index = log_.size();
-            std::cerr << "[raft] node=" << id_ << " rejecting AppendEntries: prev_log_index too large (" << prev_log_index << " >= " << log_.size() << ")\n";
+            LOG(LogLevel::WARN, "[raft] node=" << id_ << " rejecting AppendEntries: prev_log_index too large (" << prev_log_index << " >= " << log_.size() << ")");
             return res;
         }
         if (log_[prev_log_index].term != prev_log_term) {
@@ -365,7 +364,7 @@ RaftNode::AppendEntriesResult RaftNode::handleAppendEntries(uint64_t term, const
             res.term = current_term_;
             res.conflict_term = bad_term;
             res.conflict_index = first_index;
-            std::cerr << "[raft] node=" << id_ << " rejecting AppendEntries: term mismatch at prev_log_index=" << prev_log_index << " conflict_term=" << bad_term << " conflict_index=" << first_index << "\n";
+            LOG(LogLevel::WARN, "[raft] node=" << id_ << " rejecting AppendEntries: term mismatch at prev_log_index=" << prev_log_index << " conflict_term=" << bad_term << " conflict_index=" << first_index);
             return res;
         }
     }
@@ -502,10 +501,10 @@ bool RaftNode::createSnapshot(const std::string& data) {
     // Gather snapshot metadata under lock, then release before IO and compaction to avoid deadlocks
     Snapshot s;
     size_t to_drop = 0;
-    std::cerr << "[snapshot-debug] before lock" << std::endl;
+    LOG(LogLevel::DEBUG, "[snapshot] before lock");
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        std::cerr << "[snapshot-debug] after lock" << std::endl;
+        LOG(LogLevel::DEBUG, "[snapshot] after lock");
         if (state_ != State::Leader) { LOG(LogLevel::WARN, "[raft] createSnapshot node=" << id_ << " not leader"); return false; }
         if (snapshot_path_.empty()) { LOG(LogLevel::WARN, "[raft] createSnapshot no snapshot_path set"); return false; }
         s.last_included_index = last_included_index_ + log_.size();
@@ -515,19 +514,19 @@ bool RaftNode::createSnapshot(const std::string& data) {
 
     s.data = data;
     std::string path = snapshot_path_ + ".snap";
-    std::cerr << "[snapshot-debug] before async save" << std::endl;
+    LOG(LogLevel::DEBUG, "[snapshot] before async save");
     LOG(LogLevel::DEBUG, "[snapshot] save path=" << path << " index=" << s.last_included_index << " term=" << s.last_included_term << " len=" << s.data.size());
     // Run save in async with a short timeout to avoid blocking the test indefinitely
-    auto fut = std::async(std::launch::async, [&s, &path]{ std::cerr << "[snapshot-debug] in async save start" << std::endl; bool r = s.save(path); std::cerr << "[snapshot-debug] in async save done r=" << r << std::endl; return r; });
-    std::cerr << "[snapshot-debug] after launching async" << std::endl;
+    auto fut = std::async(std::launch::async, [&s, &path]{ LOG(LogLevel::DEBUG, "[snapshot] in async save start"); bool r = s.save(path); LOG(LogLevel::DEBUG, "[snapshot] in async save done r=" << r); return r; });
+    LOG(LogLevel::DEBUG, "[snapshot] after launching async");
     if (fut.wait_for(std::chrono::milliseconds(500)) != std::future_status::ready) {
-        std::cerr << "[snapshot-debug] async save timed out" << std::endl;
+        LOG(LogLevel::ERROR, "[snapshot] async save timed out");
         LOG(LogLevel::ERROR, "[raft] createSnapshot save timed out");
         return false;
     }
-    std::cerr << "[snapshot-debug] async ready" << std::endl;
-    if (!fut.get()) { std::cerr << "[snapshot-debug] async returned false" << std::endl; LOG(LogLevel::ERROR, "[raft] createSnapshot save failed"); return false; }
-    std::cerr << "[snapshot-debug] save succeeded" << std::endl;
+    LOG(LogLevel::DEBUG, "[snapshot] async ready");
+    if (!fut.get()) { LOG(LogLevel::ERROR, "[snapshot] async returned false"); LOG(LogLevel::ERROR, "[raft] createSnapshot save failed"); return false; }
+    LOG(LogLevel::DEBUG, "[snapshot] save succeeded");
 
     // compact entire log (may call WAL and acquire raft mutex internally as needed)
     if (to_drop > 0) {

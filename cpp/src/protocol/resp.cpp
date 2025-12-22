@@ -1,6 +1,7 @@
 #include "protocol/resp.h"
 #include "cache/cache.h"
 #include "sharder/router.h"
+#include "replication/log.h"
 #include <sstream>
 #include <cstdlib>
 
@@ -119,6 +120,7 @@ string RespProtocol::process(const vector<string> &args) {
         if (router) {
             auto r = router->lookup(args[1]);
             if (r.type == Router::RouteType::REMOTE) {
+                LOG(replication::LogLevel::DEBUG, "[resp] redirect GET key=" << args[1] << " to " << r.ip << ":" << r.port << " slot=" << r.slot);
                 // Return MOVED response: -MOVED <slot> <ip>:<port>\r\n
                 std::string moved = "-MOVED " + std::to_string(r.slot) + " " + r.ip + ":" + std::to_string(r.port) + "\r\n";
                 return moved;
@@ -132,6 +134,7 @@ string RespProtocol::process(const vector<string> &args) {
         if (router) {
             auto r = router->lookup(args[1]);
             if (r.type == Router::RouteType::REMOTE) {
+                LOG(replication::LogLevel::DEBUG, "[resp] redirect SET key=" << args[1] << " to " << r.ip << ":" << r.port << " slot=" << r.slot);
                 std::string moved = "-MOVED " + std::to_string(r.slot) + " " + r.ip + ":" + std::to_string(r.port) + "\r\n";
                 return moved;
             }

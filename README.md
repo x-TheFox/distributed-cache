@@ -53,6 +53,47 @@ The project is organized under the `cpp` directory, which contains the implement
   - Coverage collection and upload to Codecov
 - Test results (JUnit XML) and coverage artifacts are attached to workflow runs; Codecov also posts test/failure insights to PRs.
 
+## System Architecture
+
+- **Reactor Pattern** 🔧 — The networking layer uses a non-blocking reactor to handle high-concurrency I/O with a small number of threads. See `cpp/src/net/reactor.cpp` for the implementation and discussion in `docs/architecture.md`.
+- **Raft Consensus** 🗳️ — Raft is implemented to provide durable, consistent replication for meta-state where needed (snapshots, WAL, leader election). Key logic lives in `cpp/src/replication/raft.cpp` and `cpp/src/replication/wal.cpp`.
+- **Consistent Hashing** 🔀 — The sharder uses a simple consistent hashing ring with virtual nodes (`cpp/src/sharder/consistent_hash.cpp`) and a `MembershipService` that builds and publishes a `Router` to direct requests to the node owning a key.
+
+---
+
+## How to Run the Cluster (Demo)
+
+A small demo script starts two nodes and demonstrates redirection (MOVED) and following that MOVED to the owner node.
+
+Prerequisites:
+- Build the C++ project (see Setup above)
+- Python 3 and `redis` package: `pip install redis`
+
+Run the demo:
+
+```
+# From repository root
+python3 scripts/cluster_demo.py
+```
+
+The script launches two `distributed_cache` instances (ports 6384 and 6385), requests a deterministic key that belongs to Node B, sends a `SET` to Node A, observes the `-MOVED <slot> <ip>:<port>\r\n` response, follows the redirection, and verifies the value is stored on the owner node.
+
+Quick Start with Docker
+
+Build and run a 3-node cluster using Docker Compose:
+
+```
+# Build and start in background
+docker compose up --build -d
+
+# Run the demo from host against mapped ports
+python3 scripts/cluster_demo.py
+```
+
+The compose file launches three nodes and maps their ports to the host (6384/6385/6386). The demo script will automatically detect and use the deterministic key helper to demonstrate `-MOVED` and follow the redirection.
+
+---
+
 ## Contributing
 Contributions are welcome! Please refer to the `CONTRIBUTING.md` file for guidelines.
 
