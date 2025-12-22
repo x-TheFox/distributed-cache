@@ -25,74 +25,74 @@ struct NetSim {
 };
 
 TEST(RaftIntegration, ThreeNodeFullReplication) {
-    RaftNode a("a", {"b","c"});
-    RaftNode b("b", {"a","c"});
-    RaftNode c("c", {"a","b"});
+    auto a = std::make_shared<RaftNode>("a", std::vector<std::string>{"b","c"});
+    auto b = std::make_shared<RaftNode>("b", std::vector<std::string>{"a","c"});
+    auto c = std::make_shared<RaftNode>("c", std::vector<std::string>{"a","b"});
 
-    NetSim net;
+    auto net = std::make_shared<NetSim>();
     // fully connected
-    net.allow("a","b"); net.allow("a","c");
-    net.allow("b","a"); net.allow("b","c");
-    net.allow("c","a"); net.allow("c","b");
+    net->allow("a","b"); net->allow("a","c");
+    net->allow("b","a"); net->allow("b","c");
+    net->allow("c","a"); net->allow("c","b");
 
-    // hook RPCs through NetSim
-    a.setPeerRequestVoteFn([&](const std::string &peer, uint64_t term, const std::string &cand){
-        if (!net.ok("a", peer)) return false;
-        if (peer=="b") return b.handleRequestVote(term, cand);
-        if (peer=="c") return c.handleRequestVote(term, cand);
+    // hook RPCs through NetSim (capture shared_ptrs by value to extend lifetime)
+    a->setPeerRequestVoteFn([net, a, b, c](const std::string &peer, uint64_t term, const std::string &cand){
+        if (!net->ok("a", peer)) return false;
+        if (peer=="b") return b->handleRequestVote(term, cand);
+        if (peer=="c") return c->handleRequestVote(term, cand);
         return false;
     });
-    b.setPeerRequestVoteFn([&](const std::string &peer, uint64_t term, const std::string &cand){
-        if (!net.ok("b", peer)) return false;
-        if (peer=="a") return a.handleRequestVote(term, cand);
-        if (peer=="c") return c.handleRequestVote(term, cand);
+    b->setPeerRequestVoteFn([net, a, b, c](const std::string &peer, uint64_t term, const std::string &cand){
+        if (!net->ok("b", peer)) return false;
+        if (peer=="a") return a->handleRequestVote(term, cand);
+        if (peer=="c") return c->handleRequestVote(term, cand);
         return false;
     });
-    c.setPeerRequestVoteFn([&](const std::string &peer, uint64_t term, const std::string &cand){
-        if (!net.ok("c", peer)) return false;
-        if (peer=="a") return a.handleRequestVote(term, cand);
-        if (peer=="b") return b.handleRequestVote(term, cand);
+    c->setPeerRequestVoteFn([net, a, b, c](const std::string &peer, uint64_t term, const std::string &cand){
+        if (!net->ok("c", peer)) return false;
+        if (peer=="a") return a->handleRequestVote(term, cand);
+        if (peer=="b") return b->handleRequestVote(term, cand);
         return false;
     });
 
-    a.setPeerAppendEntriesFn([&](const std::string &peer, uint64_t term, const std::string &leader, size_t prev_index, uint64_t prev_term, const std::vector<RaftNode::Entry> &entries){
-        if (!net.ok("a", peer)) return RaftNode::AppendEntriesResult{false, 0, 0, 0, 0};
-        if (peer=="b") return b.handleAppendEntries(term, leader, prev_index, prev_term, entries);
-        if (peer=="c") return c.handleAppendEntries(term, leader, prev_index, prev_term, entries);
+    a->setPeerAppendEntriesFn([net, a, b, c](const std::string &peer, uint64_t term, const std::string &leader, size_t prev_index, uint64_t prev_term, const std::vector<RaftNode::Entry> &entries){
+        if (!net->ok("a", peer)) return RaftNode::AppendEntriesResult{false, 0, 0, 0, 0};
+        if (peer=="b") return b->handleAppendEntries(term, leader, prev_index, prev_term, entries);
+        if (peer=="c") return c->handleAppendEntries(term, leader, prev_index, prev_term, entries);
         return RaftNode::AppendEntriesResult{false, 0, 0, 0, 0};
     });
-    b.setPeerAppendEntriesFn([&](const std::string &peer, uint64_t term, const std::string &leader, size_t prev_index, uint64_t prev_term, const std::vector<RaftNode::Entry> &entries){
-        if (!net.ok("b", peer)) return RaftNode::AppendEntriesResult{false, 0, 0, 0, 0};
-        if (peer=="a") return a.handleAppendEntries(term, leader, prev_index, prev_term, entries);
-        if (peer=="c") return c.handleAppendEntries(term, leader, prev_index, prev_term, entries);
+    b->setPeerAppendEntriesFn([net, a, b, c](const std::string &peer, uint64_t term, const std::string &leader, size_t prev_index, uint64_t prev_term, const std::vector<RaftNode::Entry> &entries){
+        if (!net->ok("b", peer)) return RaftNode::AppendEntriesResult{false, 0, 0, 0, 0};
+        if (peer=="a") return a->handleAppendEntries(term, leader, prev_index, prev_term, entries);
+        if (peer=="c") return c->handleAppendEntries(term, leader, prev_index, prev_term, entries);
         return RaftNode::AppendEntriesResult{false, 0, 0, 0, 0};
     });
-    c.setPeerAppendEntriesFn([&](const std::string &peer, uint64_t term, const std::string &leader, size_t prev_index, uint64_t prev_term, const std::vector<RaftNode::Entry> &entries){
-        if (!net.ok("c", peer)) return RaftNode::AppendEntriesResult{false, 0, 0, 0, 0};
-        if (peer=="a") return a.handleAppendEntries(term, leader, prev_index, prev_term, entries);
-        if (peer=="b") return b.handleAppendEntries(term, leader, prev_index, prev_term, entries);
+    c->setPeerAppendEntriesFn([net, a, b, c](const std::string &peer, uint64_t term, const std::string &leader, size_t prev_index, uint64_t prev_term, const std::vector<RaftNode::Entry> &entries){
+        if (!net->ok("c", peer)) return RaftNode::AppendEntriesResult{false, 0, 0, 0, 0};
+        if (peer=="a") return a->handleAppendEntries(term, leader, prev_index, prev_term, entries);
+        if (peer=="b") return b->handleAppendEntries(term, leader, prev_index, prev_term, entries);
         return RaftNode::AppendEntriesResult{false, 0, 0, 0, 0};
     });
 
-    a.setReplicationIntervalMs(10);
-    b.setReplicationIntervalMs(10);
-    c.setReplicationIntervalMs(10);
+    a->setReplicationIntervalMs(10);
+    b->setReplicationIntervalMs(10);
+    c->setReplicationIntervalMs(10);
 
-    a.setElectionTimeoutMs(30);
-    b.setElectionTimeoutMs(80);
-    c.setElectionTimeoutMs(80);
+    a->setElectionTimeoutMs(30);
+    b->setElectionTimeoutMs(80);
+    c->setElectionTimeoutMs(80);
 
-    a.start(); b.start(); c.start();
+    a->start(); b->start(); c->start();
 
     // wait for some node to become leader
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
-    bool leader_found = a.isLeader() || b.isLeader() || c.isLeader();
+    bool leader_found = a->isLeader() || b->isLeader() || c->isLeader();
     ASSERT_TRUE(leader_found);
 
-    RaftNode *leader = nullptr;
-    if (a.isLeader()) leader = &a;
-    if (b.isLeader()) leader = &b;
-    if (c.isLeader()) leader = &c;
+    std::shared_ptr<RaftNode> leader = nullptr;
+    if (a->isLeader()) leader = a;
+    if (b->isLeader()) leader = b;
+    if (c->isLeader()) leader = c;
 
     ASSERT_NE(leader, nullptr);
 
@@ -101,59 +101,59 @@ TEST(RaftIntegration, ThreeNodeFullReplication) {
 
     // wait for replication
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
-    EXPECT_EQ(a.logSize(), 1u);
-    EXPECT_EQ(b.logSize(), 1u);
-    EXPECT_EQ(c.logSize(), 1u);
+    EXPECT_EQ(a->logSize(), 1u);
+    EXPECT_EQ(b->logSize(), 1u);
+    EXPECT_EQ(c->logSize(), 1u);
 
-    a.stop(); b.stop(); c.stop();
+    a->stop(); b->stop(); c->stop();
 }
 
 TEST(RaftIntegration, LeaderFailoverAndRecovery) {
-    RaftNode a("a", {"b","c"});
-    RaftNode b("b", {"a","c"});
-    RaftNode c("c", {"a","b"});
+    auto a = std::make_shared<RaftNode>("a", std::vector<std::string>{"b","c"});
+    auto b = std::make_shared<RaftNode>("b", std::vector<std::string>{"a","c"});
+    auto c = std::make_shared<RaftNode>("c", std::vector<std::string>{"a","b"});
 
-    NetSim net;
+    auto net = std::make_shared<NetSim>();
     // fully connected initially
-    net.allow("a","b"); net.allow("a","c");
-    net.allow("b","a"); net.allow("b","c");
-    net.allow("c","a"); net.allow("c","b");
+    net->allow("a","b"); net->allow("a","c");
+    net->allow("b","a"); net->allow("b","c");
+    net->allow("c","a"); net->allow("c","b");
 
-    auto attach = [&](RaftNode &self, const std::string &self_id){
-        self.setPeerRequestVoteFn([&](const std::string &peer, uint64_t term, const std::string &cand){
-            if (!net.ok(self_id, peer)) return false;
-            if (peer=="a") return a.handleRequestVote(term, cand);
-            if (peer=="b") return b.handleRequestVote(term, cand);
-            if (peer=="c") return c.handleRequestVote(term, cand);
+    auto attach = [net, a, b, c](std::shared_ptr<RaftNode> self, const std::string &self_id){
+        self->setPeerRequestVoteFn([net, a, b, c, self_id](const std::string &peer, uint64_t term, const std::string &cand){
+            if (!net->ok(self_id, peer)) return false;
+            if (peer=="a") return a->handleRequestVote(term, cand);
+            if (peer=="b") return b->handleRequestVote(term, cand);
+            if (peer=="c") return c->handleRequestVote(term, cand);
             return false;
         });
-        self.setPeerAppendEntriesFn([&](const std::string &peer, uint64_t term, const std::string &leader, size_t prev_index, uint64_t prev_term, const std::vector<RaftNode::Entry> &entries){
-            if (!net.ok(self_id, peer)) return RaftNode::AppendEntriesResult{false, 0, 0, 0, 0};
-            if (peer=="a") return a.handleAppendEntries(term, leader, prev_index, prev_term, entries);
-            if (peer=="b") return b.handleAppendEntries(term, leader, prev_index, prev_term, entries);
-            if (peer=="c") return c.handleAppendEntries(term, leader, prev_index, prev_term, entries);
+        self->setPeerAppendEntriesFn([net, a, b, c, self_id](const std::string &peer, uint64_t term, const std::string &leader, size_t prev_index, uint64_t prev_term, const std::vector<RaftNode::Entry> &entries){
+            if (!net->ok(self_id, peer)) return RaftNode::AppendEntriesResult{false, 0, 0, 0, 0};
+            if (peer=="a") return a->handleAppendEntries(term, leader, prev_index, prev_term, entries);
+            if (peer=="b") return b->handleAppendEntries(term, leader, prev_index, prev_term, entries);
+            if (peer=="c") return c->handleAppendEntries(term, leader, prev_index, prev_term, entries);
             return RaftNode::AppendEntriesResult{false, 0, 0, 0, 0};
         });
     };
 
     attach(a, "a"); attach(b, "b"); attach(c, "c");
 
-    a.setReplicationIntervalMs(10);
-    b.setReplicationIntervalMs(10);
-    c.setReplicationIntervalMs(10);
+    a->setReplicationIntervalMs(10);
+    b->setReplicationIntervalMs(10);
+    c->setReplicationIntervalMs(10);
 
-    a.setElectionTimeoutMs(30);
-    b.setElectionTimeoutMs(80);
-    c.setElectionTimeoutMs(80);
+    a->setElectionTimeoutMs(30);
+    b->setElectionTimeoutMs(80);
+    c->setElectionTimeoutMs(80);
 
-    a.start(); b.start(); c.start();
+    a->start(); b->start(); c->start();
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
 
     // identify leader
-    RaftNode *leader = nullptr;
-    if (a.isLeader()) leader = &a;
-    if (b.isLeader()) leader = &b;
-    if (c.isLeader()) leader = &c;
+    std::shared_ptr<RaftNode> leader = nullptr;
+    if (a->isLeader()) leader = a;
+    if (b->isLeader()) leader = b;
+    if (c->isLeader()) leader = c;
     ASSERT_NE(leader, nullptr);
 
     // leader appends an entry (retry up to 2s to handle timing variance under coverage/CI)
@@ -169,23 +169,23 @@ TEST(RaftIntegration, LeaderFailoverAndRecovery) {
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
     // simulate crash by partitioning the leader away (don't call stop, keep state intact but unreachable)
-    std::string orig_leader_id = leader==&a?"a": leader==&b?"b":"c";
-    if (leader==&a) { net.block("b","a"); net.block("c","a"); net.block("a","b"); net.block("a","c"); }
-    if (leader==&b) { net.block("a","b"); net.block("c","b"); net.block("b","a"); net.block("b","c"); }
-    if (leader==&c) { net.block("a","c"); net.block("b","c"); net.block("c","a"); net.block("c","b"); }
+    std::string orig_leader_id = leader==a?"a": leader==b?"b":"c";
+    if (leader==a) { net->block("b","a"); net->block("c","a"); net->block("a","b"); net->block("a","c"); }
+    if (leader==b) { net->block("a","b"); net->block("c","b"); net->block("b","a"); net->block("b","c"); }
+    if (leader==c) { net->block("a","c"); net->block("b","c"); net->block("c","a"); net->block("c","b"); }
 
     // allow others to elect
     std::this_thread::sleep_for(std::chrono::milliseconds(400));
 
     // check new leader among remaining two
-    int leaders = (a.isLeader()?1:0) + (b.isLeader()?1:0) + (c.isLeader()?1:0);
+    int leaders = (a->isLeader()?1:0) + (b->isLeader()?1:0) + (c->isLeader()?1:0);
     EXPECT_EQ(leaders, 1);
 
     // append entry on new leader (allow eventual replication; appendEntry may fail briefly during elections)
-    RaftNode *new_leader = nullptr;
-    if (a.isLeader()) new_leader = &a;
-    if (b.isLeader()) new_leader = &b;
-    if (c.isLeader()) new_leader = &c;
+    std::shared_ptr<RaftNode> new_leader = nullptr;
+    if (a->isLeader()) new_leader = a;
+    if (b->isLeader()) new_leader = b;
+    if (c->isLeader()) new_leader = c;
     ASSERT_NE(new_leader, nullptr);
     bool ok = new_leader->appendEntry("after_fail");
     if (!ok) {
@@ -195,9 +195,9 @@ TEST(RaftIntegration, LeaderFailoverAndRecovery) {
         while (waited < 5000) {
             std::this_thread::sleep_for(std::chrono::milliseconds(wait_step));
             waited += wait_step;
-            size_t s1 = a.logSize();
-            size_t s2 = b.logSize();
-            size_t s3 = c.logSize();
+            size_t s1 = a->logSize();
+            size_t s2 = b->logSize();
+            size_t s3 = c->logSize();
             size_t majority = (s1 + s2 + s3) / 3; // rough check
             if (s1 >= 2 || s2 >= 2 || s3 >= 2) break;
         }
@@ -205,20 +205,20 @@ TEST(RaftIntegration, LeaderFailoverAndRecovery) {
 
     // Confirm other nodes in the majority partition have replicated the entry
     if (orig_leader_id == "a") {
-        EXPECT_EQ(b.logSize(), 2u);
-        EXPECT_EQ(c.logSize(), 2u);
+        EXPECT_EQ(b->logSize(), 2u);
+        EXPECT_EQ(c->logSize(), 2u);
     } else if (orig_leader_id == "b") {
-        EXPECT_EQ(a.logSize(), 2u);
-        EXPECT_EQ(c.logSize(), 2u);
+        EXPECT_EQ(a->logSize(), 2u);
+        EXPECT_EQ(c->logSize(), 2u);
     } else {
-        EXPECT_EQ(a.logSize(), 2u);
-        EXPECT_EQ(b.logSize(), 2u);
+        EXPECT_EQ(a->logSize(), 2u);
+        EXPECT_EQ(b->logSize(), 2u);
     }
 
     // re-allow links and let the old leader catch up
-    if (orig_leader_id == "a") { net.allow("a","b"); net.allow("a","c"); net.allow("b","a"); net.allow("c","a"); }
-    if (orig_leader_id == "b") { net.allow("b","a"); net.allow("b","c"); net.allow("a","b"); net.allow("c","b"); }
-    if (orig_leader_id == "c") { net.allow("c","a"); net.allow("c","b"); net.allow("a","c"); net.allow("b","c"); }
+    if (orig_leader_id == "a") { net->allow("a","b"); net->allow("a","c"); net->allow("b","a"); net->allow("c","a"); }
+    if (orig_leader_id == "b") { net->allow("b","a"); net->allow("b","c"); net->allow("a","b"); net->allow("c","b"); }
+    if (orig_leader_id == "c") { net->allow("c","a"); net->allow("c","b"); net->allow("a","c"); net->allow("b","c"); }
 
     // ensure RPC hooks are still attached
     if (orig_leader_id == "a") attach(a, "a");
@@ -228,56 +228,56 @@ TEST(RaftIntegration, LeaderFailoverAndRecovery) {
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
     // all nodes should eventually have at least both entries
-    EXPECT_GE(a.logSize(), 2u);
-    EXPECT_GE(b.logSize(), 2u);
-    EXPECT_GE(c.logSize(), 2u);
+    EXPECT_GE(a->logSize(), 2u);
+    EXPECT_GE(b->logSize(), 2u);
+    EXPECT_GE(c->logSize(), 2u);
 
-    a.stop(); b.stop(); c.stop();
+    a->stop(); b->stop(); c->stop();
 }
 
 TEST(RaftIntegration, PartitionPreventsMinorityElection) {
-    RaftNode a("a", {"b","c"});
-    RaftNode b("b", {"a","c"});
-    RaftNode c("c", {"a","b"});
+    auto a = std::make_shared<RaftNode>("a", std::vector<std::string>{"b","c"});
+    auto b = std::make_shared<RaftNode>("b", std::vector<std::string>{"a","c"});
+    auto c = std::make_shared<RaftNode>("c", std::vector<std::string>{"a","b"});
 
-    NetSim net;
+    auto net = std::make_shared<NetSim>();
     // Partition: {a} vs {b,c}
-    net.allow("a","a"); net.allow("b","b"); net.allow("c","c");
-    net.allow("b","c"); net.allow("c","b");
+    net->allow("a","a"); net->allow("b","b"); net->allow("c","c");
+    net->allow("b","c"); net->allow("c","b");
 
-    auto attach = [&](RaftNode &self, const std::string &self_id){
-        self.setPeerRequestVoteFn([&](const std::string &peer, uint64_t term, const std::string &cand){
-            if (!net.ok(self_id, peer)) return false;
-            if (peer=="a") return a.handleRequestVote(term, cand);
-            if (peer=="b") return b.handleRequestVote(term, cand);
-            if (peer=="c") return c.handleRequestVote(term, cand);
+    auto attach = [net, a, b, c](std::shared_ptr<RaftNode> self, const std::string &self_id){
+        self->setPeerRequestVoteFn([net, a, b, c, self_id](const std::string &peer, uint64_t term, const std::string &cand){
+            if (!net->ok(self_id, peer)) return false;
+            if (peer=="a") return a->handleRequestVote(term, cand);
+            if (peer=="b") return b->handleRequestVote(term, cand);
+            if (peer=="c") return c->handleRequestVote(term, cand);
             return false;
         });
     };
 
     attach(a, "a"); attach(b, "b"); attach(c, "c");
 
-    a.setElectionTimeoutMs(30);
-    b.setElectionTimeoutMs(80);
-    c.setElectionTimeoutMs(80);
+    a->setElectionTimeoutMs(30);
+    b->setElectionTimeoutMs(80);
+    c->setElectionTimeoutMs(80);
 
-    a.start(); b.start(); c.start();
+    a->start(); b->start(); c->start();
 
     // Wait up to 2s for {b,c} to elect a leader; ensure 'a' does not become leader
     int waited = 0;
     const int wait_step = 50;
     while (waited < 2000) {
-        if (b.isLeader() || c.isLeader()) break;
-        if (a.isLeader()) break; // fail fast if 'a' became leader incorrectly
+        if (b->isLeader() || c->isLeader()) break;
+        if (a->isLeader()) break; // fail fast if 'a' became leader incorrectly
         std::this_thread::sleep_for(std::chrono::milliseconds(wait_step));
         waited += wait_step;
     }
 
-    bool a_leader = a.isLeader();
-    bool b_or_c_leader = b.isLeader() || c.isLeader();
+    bool a_leader = a->isLeader();
+    bool b_or_c_leader = b->isLeader() || c->isLeader();
 
     EXPECT_FALSE(a_leader) << "Node 'a' became leader in minority partition";
     EXPECT_TRUE(b_or_c_leader);
 
-    a.stop(); b.stop(); c.stop();
+    a->stop(); b->stop(); c->stop();
 }
