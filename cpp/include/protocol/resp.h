@@ -17,6 +17,11 @@ public:
     // On parse error returns empty vector (but sets consumed to 0).
     static std::optional<std::vector<std::string>> parse(const std::string_view &data, size_t &consumed);
 
+    // Parse as many complete RESP messages as possible from `data` and
+    // return a vector of parsed argument vectors. `consumed` is set to the
+    // total number of bytes consumed from the front of `data`.
+    static std::vector<std::vector<std::string>> parse_many(const std::string_view &data, size_t &consumed);
+
 private:
     static bool parseInteger(const std::string_view &s, size_t &pos, long long &out);
     static bool readLine(const std::string_view &s, size_t &pos, std::string &out);

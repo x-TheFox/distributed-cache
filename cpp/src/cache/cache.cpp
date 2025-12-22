@@ -13,7 +13,7 @@ Cache::Cache(size_t maxSize, EvictionPolicyType policy) {
     }
     // initialize stripes without resizing (mutex is non-movable): emplace defaults
     stripes_.clear();
-    for (size_t i = 0; i < stripe_count_; ++i) stripes_.push_back(std::make_unique<std::mutex>());
+    for (size_t i = 0; i < stripe_count_; ++i) stripes_.push_back(std::make_unique<std::shared_mutex>());
 
 }
 
@@ -26,13 +26,13 @@ void Cache::put(const std::string& key, const std::string& value, uint64_t ttl_m
     }
     CacheEntry entry(value, expiry);
     size_t idx = hasher_(key) % stripe_count_;
-    std::lock_guard<std::mutex> lock(*stripes_[idx]);
+    std::lock_guard<std::shared_mutex> lock(*stripes_[idx]);
     evictor_->put(key, entry);
 }
 
 std::optional<std::string> Cache::get(const std::string& key) {
     size_t idx = hasher_(key) % stripe_count_;
-    std::lock_guard<std::mutex> lock(*stripes_[idx]);
+    std::shared_lock<std::shared_mutex> lock(*stripes_[idx]);
     CacheEntry entry;
     if (!evictor_->get(key, entry)) {
         ++misses_;
@@ -40,6 +40,9 @@ std::optional<std::string> Cache::get(const std::string& key) {
     }
     if (entry.expired()) {
         // Remove expired entry
+        // Upgrade to exclusive lock for mutation
+        lock.unlock();
+        std::lock_guard<std::shared_mutex> wlock(*stripes_[idx]);
         evictor_->remove(key);
         ++misses_;
         return std::nullopt;
@@ -50,7 +53,7 @@ std::optional<std::string> Cache::get(const std::string& key) {
 
 bool Cache::remove(const std::string& key) {
     size_t idx = hasher_(key) % stripe_count_;
-    std::lock_guard<std::mutex> lock(*stripes_[idx]);
+    std::lock_guard<std::shared_mutex> lock(*stripes_[idx]);
     return evictor_->remove(key);
 }
 
