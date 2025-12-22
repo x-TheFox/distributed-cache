@@ -4,6 +4,7 @@
 #include "cache/cache.h"
 #include "protocol/resp.h"
 #include "metrics/metrics.h"
+#include "replication/log.h"
 
 #include <unistd.h>
 #include <fcntl.h>
@@ -92,6 +93,7 @@ void Reactor::acceptClient() {
             if (errno == EAGAIN || errno == EWOULDBLOCK) return;
             perror("accept"); return;
         }
+        LOG(replication::LogLevel::DEBUG, "[reactor] accepted client fd=" << cfd);
         if (setNonBlocking(cfd) < 0) perror("setnonblock");
         {
             std::lock_guard<std::mutex> lock(clients_mutex_);
@@ -122,6 +124,7 @@ void Reactor::handleClientRead(int client_fd) {
             closeClient(client_fd);
             return;
         }
+        LOG(replication::LogLevel::DEBUG, "[reactor] read fd=" << client_fd << " bytes=" << n);
         if (n == 0) { closeClient(client_fd); return; }
         {
             std::lock_guard<std::mutex> lock(clients_mutex_);

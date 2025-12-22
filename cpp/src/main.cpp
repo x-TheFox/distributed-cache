@@ -65,8 +65,44 @@ int main(int argc, char* argv[]) {
     ms.OnNodeJoin(local.id, local.ip, local.port);
     if (!seeds.empty()) ms.LoadSeedList(seeds);
 
+    // Support a deterministic helper to find a key that maps to a given node id.
+    // This is useful for demos and tests: it does a fast scan using the same ConsistentHash
+    // and returns a key that will be owned by the requested node.
+    for (int i = 1; i < argc; ++i) {
+        std::string a = argv[i];
+        if (a == "--find-key-for-node" && i + 1 < argc) {
+            std::string target = argv[++i];
+            int max_tries = 100000;
+            for (int j = 0; j < argc; ++j) {
+                std::string b = argv[j];
+                if (b == "--max-tries" && j + 1 < argc) {
+                    max_tries = std::stoi(argv[j+1]);
+                }
+            }
+            // Fast scan using the same ConsistentHash/ring via the global router
+            auto router = Router::get_default();
+            if (!router) {
+                std::cerr << "No router available (ensure seeds are provided)\n";
+                return 2;
+            }
+            for (int k = 0; k < max_tries; ++k) {
+                std::string key = "demo_key_" + std::to_string(k);
+                auto r = router->lookup(key);
+                std::string owner = router->get_owner_node(key);
+                // Match by node id (e.g., "nodeB") or by ip:port (e.g., "127.0.0.1:6385")
+                std::string ipport = r.ip + ":" + std::to_string(r.port);
+                if (target == owner || target == ipport || (target == local.id && r.type == Router::RouteType::LOCAL)) {
+                    std::cout << key << std::endl;
+                    return 0;
+                }
+            }
+            std::cerr << "Failed to find key for node after " << max_tries << " tries\n";
+            return 3;
+        }
+    }
+
     // Start the server (TCP by default) on the configured port
-    LOG(LogLevel::INFO, "starting server node=" << local.id << " port=" << port);
+    LOG(replication::LogLevel::INFO, "starting server node=" << local.id << " port=" << port);
     TCPServer tcpServer(port, &cache);
     tcpServer.start();
 

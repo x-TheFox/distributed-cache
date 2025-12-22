@@ -1,0 +1,17 @@
+version: '3.8'
+services:
+  node1:
+    build: .
+    command: ["tcp", "--port", "6384", "--node-id", "node1", "--seed", "node2:6385", "--seed", "node3:6386"]
+    ports:
+      - "6384:6384"
+  node2:
+    build: .
+    command: ["tcp", "--port", "6385", "--node-id", "node2", "--seed", "node1:6384", "--seed", "node3:6386"]
+    ports:
+      - "6385:6385"
+  node3:
+    build: .
+    command: ["tcp", "--port", "6386", "--node-id", "node3", "--seed", "node1:6384", "--seed", "node2:6385"]
+    ports:
+      - "6386:6386"

@@ -41,6 +41,10 @@ Router::Route Router::lookup(const std::string &key) const {
     return Route{RouteType::REMOTE, ip, port, slot};
 }
 
+std::string Router::get_owner_node(const std::string &key) const {
+    return ring_.get_node(key);
+}
+
 void Router::set_default(std::shared_ptr<Router> r) {
     std::atomic_store(&default_router_, r);
 }

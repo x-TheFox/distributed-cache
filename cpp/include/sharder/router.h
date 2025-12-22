@@ -31,6 +31,9 @@ public:
     // Look up route for a key
     Route lookup(const std::string &key) const;
 
+    // Return the owner node id for a given key (e.g., "nodeA")
+    std::string get_owner_node(const std::string &key) const;
+
     // Helpers to set/get a global default router (convenience for protocol integration)
     static void set_default(std::shared_ptr<Router> r);
     static std::shared_ptr<Router> get_default();

@@ -76,7 +76,21 @@ Run the demo:
 python3 scripts/cluster_demo.py
 ```
 
-The script launches two `distributed_cache` instances (ports 6384 and 6385), sends SET requests to Node A until one triggers a `-MOVED` error, parses the MOVED response, and follows the redirection to verify the key was stored on the owner node.
+The script launches two `distributed_cache` instances (ports 6384 and 6385), requests a deterministic key that belongs to Node B, sends a `SET` to Node A, observes the `-MOVED <slot> <ip>:<port>\r\n` response, follows the redirection, and verifies the value is stored on the owner node.
+
+Quick Start with Docker
+
+Build and run a 3-node cluster using Docker Compose:
+
+```
+# Build and start in background
+docker compose up --build -d
+
+# Run the demo from host against mapped ports
+python3 scripts/cluster_demo.py
+```
+
+The compose file launches three nodes and maps their ports to the host (6384/6385/6386). The demo script will automatically detect and use the deterministic key helper to demonstrate `-MOVED` and follow the redirection.
 
 ---
 
